@@ -9,7 +9,9 @@
     "start": "tsx src/server.ts",
     "build": "tsc --noEmit",
     "patron": "tsx agents/patron.ts",
-    "verify": "tsx scripts/verify.ts"
+    "verify": "tsx scripts/verify.ts",
+    "preflight": "tsx scripts/preflight.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
     "@okxweb3/mpp": "^0.1.0",
