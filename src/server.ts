@@ -67,11 +67,41 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
 const app = express();
 app.use(express.json());
 
+// Facilitator readiness. The resource server must load supported payment kinds
+// from the OKX facilitator before it can build 402 challenges. On a hosted ASP
+// that call can transiently fail (network blip, credential rotation), so we do
+// NOT let it crash the process — we boot, serve discovery for marketplace
+// review, and retry init in the background until it succeeds. When the operator
+// fixes credentials, the live deployment self-heals with no restart.
+let paymentsReady = false;
+
+async function initWithRetry(): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      // The HTTP resource server is what the payment middleware consumes; init it
+      // here (not the middleware, see below) so failures land in this catch.
+      await httpServer.initialize();
+      paymentsReady = true;
+      console.log(`Facilitator ready — paid surfaces live on X Layer (${NETWORK}).`);
+      return;
+    } catch (e) {
+      const wait = Math.min(60_000, 2_000 * attempt);
+      console.warn(`Facilitator init failed (attempt ${attempt}): ${(e as Error).message}. Retrying in ${wait / 1000}s.`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+// A hosted ASP must outlive a facilitator or RPC blip. Log stray async failures
+// instead of letting Node's default handler take the whole process down.
+process.on("unhandledRejection", (reason) => console.error("unhandledRejection:", reason));
+
 // Free discovery route — also the URL the marketplace listing points at.
 app.get("/", (_req, res) =>
   res.json({
     name: "Argus",
     tagline: "The trust bureau of the agent economy",
+    paymentsReady,
     surfaces: {
       screen: "POST /api/screen — $0.001 x402/exact — is this wallet safe to pay?",
       audit: "POST /api/audit — ≤$0.20 x402/upto metered — adversarially test a target ASP",
@@ -84,7 +114,22 @@ app.get("/", (_req, res) =>
   }),
 );
 
-app.use(paymentMiddlewareFromHTTPServer(httpServer));
+// Health probe for the host's load balancer — always 200 once the process is up.
+app.get("/healthz", (_req, res) => res.json({ ok: true, paymentsReady }));
+
+// Guard the paid surfaces until the facilitator has loaded — a 503 with a clear
+// reason is far better than a cryptic middleware crash mid-request.
+app.use((req, res, next) => {
+  if (!paymentsReady && req.method === "POST") {
+    return res.status(503).json({ error: "payment facilitator initializing — retry shortly", paymentsReady });
+  }
+  next();
+});
+
+// syncFacilitatorOnStart=false: don't let the middleware eagerly (and un-caught-ly)
+// initialize the facilitator at construction time. We own init via initWithRetry();
+// the 503 guard above ensures no paid request reaches here before it succeeds.
+app.use(paymentMiddlewareFromHTTPServer(httpServer, undefined, undefined, false));
 
 app.post("/api/screen", async (req, res) => {
   const { address } = req.body ?? {};
@@ -119,7 +164,7 @@ app.post("/api/certify", async (req, res) => {
 app.post("/api/monitor", monitorEnrollHandler);
 app.post("/session/watch", watchSessionHandler);
 
-app.listen(PORT, async () => {
-  await resourceServer.initialize();
-  console.log(`Argus watching on :${PORT} — trust services live on X Layer (${NETWORK})`);
+app.listen(PORT, () => {
+  console.log(`Argus watching on :${PORT} — discovery live, warming facilitator (${NETWORK})…`);
+  void initWithRetry();
 });
