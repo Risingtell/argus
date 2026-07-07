@@ -13,6 +13,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { x402Client, x402HTTPClient } from "@okxweb3/x402-core/client";
 import { registerExactEvmScheme } from "@okxweb3/x402-evm/exact/client";
+import { UptoEvmScheme } from "@okxweb3/x402-evm/upto/client";
 
 export interface Settlement {
   status?: string;
@@ -59,11 +60,15 @@ export class X402Payer {
     const account = privateKeyToAccount(privateKey as Hex);
     this.address = account.address;
     const client = new x402Client();
+    // Register both dialects Argus buys in: `exact` (screen/certify, EIP-3009,
+    // gasless) and `upto` (audit, Permit2-metered). Without the upto scheme the
+    // client can't answer a metered 402.
     registerExactEvmScheme(client, {
       signer: account,
       schemeOptions: { rpcUrl },
       networks: ["eip155:196"],
     });
+    client.register("eip155:196", new UptoEvmScheme(account, { rpcUrl }));
     this.http = new x402HTTPClient(client);
   }
 
@@ -137,7 +142,9 @@ function firstAccept(paymentRequired: unknown): Quote | null {
     scheme: a.scheme as string | undefined,
     network: a.network as string | undefined,
     payTo: a.payTo as string | undefined,
-    value: a.value as string | undefined,
+    // OKX x402 v2 names the atomic price `amount`; keep `value` as a fallback
+    // for any resource server that emits the older field name.
+    value: (a.amount ?? a.value) as string | undefined,
   };
 }
 

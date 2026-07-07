@@ -29,6 +29,27 @@ export interface ProbeResult {
 
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
+/** The USD₮0 actually delivered to `payee` in settlement tx `tx`, read from chain — the ground truth. */
+async function onchainSettledAmount(tx: string, payee: string): Promise<bigint | null> {
+  try {
+    const receipt = await publicClient.getTransactionReceipt({ hash: tx as `0x${string}` });
+    const usdt0 = getAddress(USDT0);
+    let total: bigint | null = null;
+    for (const log of receipt.logs) {
+      if (getAddress(log.address) !== usdt0) continue;
+      try {
+        const ev = decodeEventLog({ abi: [TRANSFER], data: log.data, topics: log.topics });
+        if (getAddress(ev.args.to) === getAddress(payee)) total = (total ?? 0n) + ev.args.value;
+      } catch {
+        /* not a Transfer log */
+      }
+    }
+    return total;
+  } catch {
+    return null;
+  }
+}
+
 function init(ctx: ProbeContext): RequestInit {
   return ctx.method === "POST"
     ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ctx.sampleBody ?? {}) }
@@ -132,7 +153,12 @@ async function receiptMatchesChain(ctx: ProbeContext): Promise<ProbeResult> {
 async function noOvercharge(ctx: ProbeContext): Promise<ProbeResult> {
   const out = await ctx.payer.call(ctx.url, init(ctx));
   const quoted = out.quote?.value ? BigInt(out.quote.value) : null;
-  const settled = out.settlement?.amount ? BigInt(out.settlement.amount) : null;
+  // OKX's PAYMENT-RESPONSE leaves `amount` null, so trust the chain: the USD₮0
+  // actually moved to the payee in the settlement tx is what the buyer was charged.
+  const tx = out.settlement?.transaction;
+  const payee = out.quote?.payTo;
+  let settled = out.settlement?.amount ? BigInt(out.settlement.amount) : null;
+  if (settled == null && tx && payee) settled = await onchainSettledAmount(tx, payee);
   if (quoted == null || settled == null) {
     return {
       id: "no-overcharge",
