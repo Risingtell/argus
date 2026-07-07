@@ -37,6 +37,9 @@ const facilitatorClient = new OKXFacilitatorClient({
   secretKey: process.env.OKX_SECRET_KEY!,
   passphrase: process.env.OKX_PASSPHRASE!,
   syncSettle: true, // confirm settlement on-chain before delivering a verdict/certificate
+  // HMAC signs only timestamp+method+path+body, so the API host is swappable —
+  // lets dev boxes on networks that can't reach web3.okx.com route via a relay.
+  ...(process.env.OKX_BASE_URL ? { baseUrl: process.env.OKX_BASE_URL } : {}),
 });
 
 const resourceServer = new x402ResourceServer(facilitatorClient)

@@ -37,6 +37,7 @@ function mpp(): MppLike {
     apiKey: process.env.OKX_API_KEY!,
     secretKey: process.env.OKX_SECRET_KEY!,
     passphrase: process.env.OKX_PASSPHRASE!,
+    ...(process.env.OKX_BASE_URL ? { baseUrl: process.env.OKX_BASE_URL } : {}),
   });
   // Session vouchers are signed by the treasury key; its address must equal `recipient` (PAY_TO).
   const signer = privateKeyToAccount(process.env.MPP_MERCHANT_PRIVATE_KEY as Hex);
