@@ -1,0 +1,36 @@
+# Render blueprint — deploys Argus as a persistent web service (needed for the
+# file-backed audit store, MPP session state, and the facilitator background
+# retry; a serverless function can't hold these). Connect this repo in Render →
+# it reads this file. Set the secret env vars in the dashboard (never commit them).
+services:
+  - type: web
+    name: argus
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      # Render injects PORT automatically; the server already reads it.
+      - key: NODE_VERSION
+        value: "22"
+      # web3.okx.com is reachable from Render's network, so no relay is needed —
+      # leave OKX_BASE_URL unset in production (the code falls back to direct).
+      - key: OKX_API_KEY
+        sync: false
+      - key: OKX_SECRET_KEY
+        sync: false
+      - key: OKX_PASSPHRASE
+        sync: false
+      - key: PAY_TO
+        sync: false
+      - key: MPP_MERCHANT_PRIVATE_KEY
+        sync: false
+      - key: MPP_SECRET_KEY
+        sync: false
+      - key: SPLIT_PARTNER
+        sync: false
+      - key: BUYER_PRIVATE_KEY
+        sync: false
+      - key: XLAYER_RPC
+        value: https://rpc.xlayer.tech
