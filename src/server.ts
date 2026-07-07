@@ -26,6 +26,7 @@ import { UptoEvmScheme } from "@okxweb3/x402-evm/upto/server";
 import { screen } from "./engine/screen.js";
 import { runAudit } from "./audit/run.js";
 import { certify } from "./certify/attest.js";
+import { monitorEnrollHandler, watchSessionHandler } from "./payments/mpp.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const PAY_TO = process.env.PAY_TO ?? "0x0000000000000000000000000000000000000000";
@@ -69,11 +70,13 @@ app.get("/", (_req, res) =>
     name: "Argus",
     tagline: "The trust bureau of the agent economy",
     surfaces: {
-      screen: "$0.001 — is this wallet safe to pay?",
-      audit: "≤$0.20 metered — adversarially test a target ASP",
-      certify: "$0.05 — on-chain quality attestation",
-      monitor: "session — continuous re-audit",
+      screen: "POST /api/screen — $0.001 x402/exact — is this wallet safe to pay?",
+      audit: "POST /api/audit — ≤$0.20 x402/upto metered — adversarially test a target ASP",
+      certify: "POST /api/certify — $0.05 x402/exact — on-chain quality attestation",
+      monitor: "POST /api/monitor — $0.05 MPP/charge+split — enroll for continuous monitoring",
+      watch: "POST /session/watch — MPP session channel — pay-per-recheck",
     },
+    protocols: ["x402: exact, upto", "MPP: charge (+splits), session"],
     network: "X Layer (eip155:196), settled in USD₮0",
   }),
 );
@@ -108,6 +111,10 @@ app.post("/api/certify", async (req, res) => {
     res.status(400).json({ error: (e as Error).message });
   }
 });
+
+// MPP-gated routes (self-handle their own 402 — not intercepted by the x402 middleware above)
+app.post("/api/monitor", monitorEnrollHandler);
+app.post("/session/watch", watchSessionHandler);
 
 app.listen(PORT, async () => {
   await resourceServer.initialize();
