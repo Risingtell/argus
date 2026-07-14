@@ -46,21 +46,64 @@ const resourceServer = new x402ResourceServer(facilitatorClient)
   .register(NETWORK, new ExactEvmScheme())
   .register(NETWORK, new UptoEvmScheme());
 
+// The SDK's x402 v2 wire format puts the payment challenge only in the
+// PAYMENT-REQUIRED response header (base64). Some client SDKs' replay
+// handshake expects the same challenge mirrored in the JSON response body —
+// without it they can settle on-chain but never complete the replay to
+// receive the paid resource. `unpaidResponseBody` is the SDK's documented
+// hook for this: it reconstructs the identical (deterministic, nonce-free)
+// PaymentRequired object the middleware already puts in the header, and
+// returns it as the body too, so either parsing style works.
+function mirrorChallengeInBody(
+  accepts: { scheme: string; network: typeof NETWORK; payTo: string; price: string; maxTimeoutSeconds: number },
+  description: string,
+  mimeType: string,
+) {
+  return async (context: { adapter: { getUrl(): string } }) => {
+    const requirements = await resourceServer.buildPaymentRequirementsFromOptions([accepts], context);
+    const paymentRequired = await resourceServer.createPaymentRequiredResponse(
+      requirements,
+      { url: context.adapter.getUrl(), description, mimeType },
+      "Payment required",
+    );
+    return { contentType: "application/json", body: paymentRequired };
+  };
+}
+
+const screenAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.001", maxTimeoutSeconds: 300 };
+const auditAccepts = { scheme: "upto", network: NETWORK, payTo: PAY_TO, price: "$0.20", maxTimeoutSeconds: 600 };
+const certifyAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.05", maxTimeoutSeconds: 300 };
+
 const httpServer = new x402HTTPResourceServer(resourceServer, {
   "POST /api/screen": {
     description: "Counterparty risk verdict for a wallet — safe / caution / block",
     mimeType: "application/json",
-    accepts: { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.001", maxTimeoutSeconds: 300 },
+    accepts: screenAccepts,
+    unpaidResponseBody: mirrorChallengeInBody(
+      screenAccepts,
+      "Counterparty risk verdict for a wallet — safe / caution / block",
+      "application/json",
+    ),
   },
   "POST /api/audit": {
     description: "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
     mimeType: "application/json",
-    accepts: { scheme: "upto", network: NETWORK, payTo: PAY_TO, price: "$0.20", maxTimeoutSeconds: 600 },
+    accepts: auditAccepts,
+    unpaidResponseBody: mirrorChallengeInBody(
+      auditAccepts,
+      "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
+      "application/json",
+    ),
   },
   "POST /api/certify": {
     description: "Issue a signed, on-chain-verifiable quality attestation for an audited ASP",
     mimeType: "application/json",
-    accepts: { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.05", maxTimeoutSeconds: 300 },
+    accepts: certifyAccepts,
+    unpaidResponseBody: mirrorChallengeInBody(
+      certifyAccepts,
+      "Issue a signed, on-chain-verifiable quality attestation for an audited ASP",
+      "application/json",
+    ),
   },
 });
 
