@@ -64,6 +64,10 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
 });
 
 const app = express();
+// Trust the deploying host's reverse proxy (Render/Cloudflare/etc.) so
+// req.protocol reflects the real public scheme in the x402 challenge's
+// resource URL, not the internal http hop behind TLS termination.
+app.set("trust proxy", true);
 app.use(express.json());
 
 // Free discovery card — where a marketplace listing or an auditor starts.

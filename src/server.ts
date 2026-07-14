@@ -65,6 +65,11 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
 });
 
 const app = express();
+// Render/Cloudflare terminate TLS in front of this app, so req.protocol is
+// "http" unless we trust their X-Forwarded-Proto header — without this, the
+// x402 SDK builds 402 challenge resource URLs as http://, which a strict
+// client can reject even though the endpoint is genuinely https-only.
+app.set("trust proxy", true);
 app.use(express.json());
 
 // Facilitator readiness. The resource server must load supported payment kinds
