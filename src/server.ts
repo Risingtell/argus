@@ -95,6 +95,22 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
       "application/json",
     ),
   },
+  // Some marketplace validators (e.g. OKX's `onchainos agent x402-check`) probe
+  // a listed endpoint with an unpaid GET to confirm it answers the x402
+  // challenge before ever sending a real paid POST. The unpaid challenge is
+  // method-agnostic — this doesn't add a working GET audit flow, it just makes
+  // the same 402 challenge answer GET too, so the probe passes. Paid POST
+  // metering below is untouched.
+  "GET /api/audit": {
+    description: "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
+    mimeType: "application/json",
+    accepts: auditAccepts,
+    unpaidResponseBody: mirrorChallengeInBody(
+      auditAccepts,
+      "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
+      "application/json",
+    ),
+  },
   "POST /api/certify": {
     description: "Issue a signed, on-chain-verifiable quality attestation for an audited ASP",
     mimeType: "application/json",
