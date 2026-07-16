@@ -105,7 +105,7 @@ export async function watchSessionHandler(req: ExReq, res: ExRes): Promise<void>
     amount: "1000", // unit price: 0.001 USD₮0 per check
     currency: USDT0,
     recipient: process.env.PAY_TO!,
-    description: "Argus watch — per-check monitoring channel",
+    description: "Argus watch - per-check monitoring channel",
     unitType: "check",
     suggestedDeposit: "100000", // ~100 checks
     methodDetails: {
