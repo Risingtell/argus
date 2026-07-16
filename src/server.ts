@@ -81,7 +81,7 @@ const certifyAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price
 
 const httpServer = new x402HTTPResourceServer(resourceServer, {
   "POST /api/screen": {
-    description: "Counterparty risk verdict for a wallet — safe / caution / block",
+    description: "Counterparty risk verdict for a wallet - safe / caution / block",
     mimeType: "application/json",
     accepts: screenAccepts,
     unpaidResponseBody: mirrorChallengeInBody(
