@@ -13,6 +13,8 @@
  *     POST /session/monitor  MPP session          continuous re-audit channel
  */
 import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import {
@@ -27,6 +29,9 @@ import { screen } from "./engine/screen.js";
 import { runAudit } from "./audit/run.js";
 import { certify } from "./certify/attest.js";
 import { monitorEnrollHandler, watchSessionHandler } from "./payments/mpp.js";
+import { rateLimited } from "./demo/rateLimit.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 4000);
 const PAY_TO = process.env.PAY_TO ?? "0x0000000000000000000000000000000000000000";
@@ -180,6 +185,26 @@ app.get("/", (_req, res) =>
 
 // Health probe for the host's load balancer — always 200 once the process is up.
 app.get("/healthz", (_req, res) => res.json({ ok: true, paymentsReady }));
+
+// Human-facing landing page + a free, rate-limited demo of `screen` — no
+// payment, no facilitator dependency, so it works even during facilitator
+// warm-up. Mirrors the pattern third-party ASPs on the marketplace use for
+// their own public playgrounds (a separate free endpoint, not the paid one).
+app.get("/site", (_req, res) => res.sendFile(path.join(__dirname, "../public/site.html")));
+
+app.post("/api/demo/screen", async (req, res) => {
+  const key = req.ip ?? "unknown";
+  if (rateLimited(key)) {
+    return res.status(429).json({ error: "Rate limited — try again in a minute." });
+  }
+  const { address } = req.body ?? {};
+  if (!address) return res.status(400).json({ error: "body must include { address }" });
+  try {
+    res.json(await screen(String(address)));
+  } catch (e) {
+    res.status(400).json({ error: `invalid address: ${(e as Error).message}` });
+  }
+});
 
 // Guard the paid surfaces until the facilitator has loaded — a 503 with a clear
 // reason is far better than a cryptic middleware crash mid-request.

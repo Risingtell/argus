@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Argus — the trust bureau of the agent economy</title>
+<meta name="description" content="Argus vets agent services and screens counterparty wallets before you pay them, by actually paying the target and verifying every receipt on-chain." />
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #101a2e;
+    --panel-2: #0e1626;
+    --border: #1e2c47;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #14b8a6;
+    --accent-bright: #5eead4;
+    --safe: #22c55e;
+    --caution: #f59e0b;
+    --block: #ef4444;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -10%, #0f766e22, transparent), var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.55;
+  }
+  a { color: var(--accent-bright); }
+  .shell { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+  header.hero { padding: 64px 0 40px; text-align: center; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; color: var(--accent-bright); letter-spacing: 0.02em; text-transform: uppercase; margin-bottom: 18px; }
+  .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px #14b8a622; }
+  h1 { font-size: clamp(28px, 5vw, 44px); margin: 0 0 14px; line-height: 1.15; }
+  h1 span { color: var(--accent-bright); }
+  .lede { color: var(--muted); font-size: 17px; max-width: 620px; margin: 0 auto; }
+  .status-row { display: flex; justify-content: center; gap: 18px; margin-top: 22px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); }
+  .status-pill .led { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .status-pill.ok .led { background: var(--safe); }
+
+  section { margin: 44px 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 18px; font-weight: 700; }
+
+  /* live demo */
+  .demo-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  input#addr { flex: 1; min-width: 220px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 12px 14px; border-radius: 10px; font-family: var(--mono); font-size: 14px; }
+  input#addr:focus { outline: none; border-color: var(--accent); }
+  button { background: var(--accent); color: #04211d; border: 0; border-radius: 10px; padding: 12px 20px; font-weight: 700; font-size: 14px; cursor: pointer; white-space: nowrap; }
+  button:hover { background: var(--accent-bright); }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .chip { border: 1px solid var(--border); background: var(--panel-2); color: var(--muted); padding: 6px 12px; border-radius: 999px; font-size: 12.5px; cursor: pointer; }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .result { margin-top: 18px; display: none; }
+  .result.show { display: block; }
+  .verdict-badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .verdict-badge.safe { background: #22c55e22; color: var(--safe); }
+  .verdict-badge.caution { background: #f59e0b22; color: var(--caution); }
+  .verdict-badge.block { background: #ef444422; color: var(--block); }
+  .rec { margin: 12px 0; color: var(--text); font-size: 14.5px; }
+  .flags { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
+  .flags li { font-size: 13px; color: var(--muted); font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+  .error { color: var(--block); font-size: 14px; margin-top: 14px; }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+
+  /* services */
+  .services { display: grid; gap: 12px; }
+  .svc { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; gap: 14px; flex-wrap: wrap; }
+  .svc-name { font-weight: 700; font-size: 14.5px; }
+  .svc-desc { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .svc-price { font-family: var(--mono); color: var(--accent-bright); font-weight: 700; white-space: nowrap; }
+
+  /* evidence */
+  .evidence { display: grid; gap: 10px; }
+  .ev-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; gap: 12px; flex-wrap: wrap; }
+  .ev-label { color: var(--muted); }
+  .ev-hash { font-family: var(--mono); }
+
+  /* architecture */
+  .arch-steps { display: grid; gap: 10px; counter-reset: step; }
+  .arch-steps li { list-style: none; display: flex; gap: 12px; align-items: flex-start; font-size: 14px; color: var(--text); }
+  .arch-steps li::before { counter-increment: step; content: counter(step); flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--border); color: var(--accent-bright); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .arch-steps span.muted { color: var(--muted); }
+
+  footer { text-align: center; padding: 40px 0 60px; color: var(--muted); font-size: 13px; }
+  footer a { color: var(--muted); text-decoration: underline; margin: 0 8px; }
+  footer a:hover { color: var(--accent-bright); }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div class="brand"><span class="dot"></span> Argus</div>
+      <h1>The <span>trust bureau</span> of the agent economy</h1>
+      <p class="lede">Argus vets other agent services before you hire them, and screens counterparty wallets before you pay them — by actually paying the target and verifying every receipt on-chain.</p>
+      <div class="status-row">
+        <span class="status-pill" id="pill-net"><span class="led" style="background:var(--accent)"></span> X Layer (eip155:196)</span>
+        <span class="status-pill" id="pill-pay"><span class="led"></span> checking payment facilitator...</span>
+      </div>
+    </header>
+
+    <section class="card">
+      <h2>Try It — Free Wallet Risk Preview</h2>
+      <div class="demo-row">
+        <input id="addr" type="text" placeholder="0x... wallet address to screen" autocomplete="off" spellcheck="false" />
+        <button id="scan-btn">Scan wallet</button>
+      </div>
+      <div class="chips">
+        <button class="chip" data-addr="0x8589427373d6d84e98730d7795d8f6f8731fda16">Tornado Cash (expect BLOCK)</button>
+        <button class="chip" data-addr="0x000000000022D473030F116dDEE9F6B43aC78BA3">Permit2 (expect SAFE)</button>
+        <button class="chip" id="chip-fresh">Random fresh wallet (expect CAUTION)</button>
+      </div>
+      <div class="result" id="result">
+        <span class="verdict-badge" id="verdict-badge"></span>
+        <p class="rec" id="rec"></p>
+        <ul class="flags" id="flags"></ul>
+      </div>
+      <div class="error" id="error"></div>
+      <p class="hint">This is a free, rate-limited preview of the <code>screen</code> engine — live X Layer signals, real verdict, no payment. The production endpoint (<code>POST /api/screen</code>, $0.001 x402) is what agents actually pay per call.</p>
+    </section>
+
+    <section class="card">
+      <h2>Services</h2>
+      <div class="services">
+        <div class="svc">
+          <div><div class="svc-name">Wallet Risk Screening</div><div class="svc-desc">Safe / caution / block verdict on any wallet before you pay it</div></div>
+          <div class="svc-price">$0.001 · x402 exact</div>
+        </div>
+        <div class="svc">
+          <div><div class="svc-name">Agent Service Audit</div><div class="svc-desc">5 paid adversarial probes against a target ASP, graded A–F</div></div>
+          <div class="svc-price">≤ $0.20 · x402 upto</div>
+        </div>
+        <div class="svc">
+          <div><div class="svc-name">On-chain Quality Certificate</div><div class="svc-desc">Signed EIP-712 attestation for a passed audit</div></div>
+          <div class="svc-price">$0.05 · x402 exact</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Real Settlements — Verify On-Chain</h2>
+      <div class="evidence">
+        <div class="ev-row"><span class="ev-label">screen</span><a class="ev-hash" href="https://www.oklink.com/x-layer/tx/0x88aac1b962dd19ccde86e42f22d8bd4454446e610b96ce2854815f827a48b94c" target="_blank" rel="noopener">0x88aac1b9...48b94c ↗</a></div>
+        <div class="ev-row"><span class="ev-label">audit</span><a class="ev-hash" href="https://www.oklink.com/x-layer/tx/0x5b23872adc0836785072a0d3efbbb66d3762fdd7209f9df4f99673db4cb5dd96" target="_blank" rel="noopener">0x5b23872a...b5dd96 ↗</a></div>
+        <div class="ev-row"><span class="ev-label">certify</span><a class="ev-hash" href="https://www.oklink.com/x-layer/tx/0xe0fbfc894ad422a426ede1e634cde8d69cab465844417836d08f7ddc8f1fe2dc" target="_blank" rel="noopener">0xe0fbfc89...f1fe2dc ↗</a></div>
+      </div>
+      <p class="hint">Every row is a real USD₮0 transfer on X Layer, settled through the OKX Agent Payments Protocol. Re-derive the full history yourself: <code>npm run verify</code> in the <a href="https://github.com/Risingtell/argus" target="_blank" rel="noopener">repo</a> scans on-chain Transfer logs directly — no Argus API involved.</p>
+    </section>
+
+    <section class="card">
+      <h2>How It Works</h2>
+      <ol class="arch-steps">
+        <li><span>A buyer agent pays <code>POST /api/screen</code> $0.001 over x402</span><span class="muted"> — signed, settled in USD₮0 on X Layer</span></li>
+        <li><span>Argus reads live X Layer signals plus a sanctioned-address blocklist</span><span class="muted"> — no off-chain guessing</span></li>
+        <li><span>To audit a service, Argus becomes its paying customer</span><span class="muted"> — 5 adversarial probes, billed per test actually run</span></li>
+        <li><span>A passing audit can be minted into a signed EIP-712 certificate</span><span class="muted"> — verifiable offline, no Argus API required</span></li>
+      </ol>
+    </section>
+
+    <footer>
+      Listed on <a href="https://www.okx.ai" target="_blank" rel="noopener">OKX.AI</a> ·
+      <a href="https://github.com/Risingtell/argus" target="_blank" rel="noopener">Source on GitHub</a> ·
+      <a href="/">API discovery</a>
+    </footer>
+  </div>
+
+<script>
+(function () {
+  var addrInput = document.getElementById('addr');
+  var scanBtn = document.getElementById('scan-btn');
+  var resultEl = document.getElementById('result');
+  var badgeEl = document.getElementById('verdict-badge');
+  var recEl = document.getElementById('rec');
+  var flagsEl = document.getElementById('flags');
+  var errorEl = document.getElementById('error');
+  var pillPay = document.getElementById('pill-pay');
+
+  fetch('/healthz').then(function (r) { return r.json(); }).then(function (d) {
+    pillPay.innerHTML = '<span class="led" style="background:' + (d.paymentsReady ? 'var(--safe)' : 'var(--caution)') + '"></span> payment facilitator ' + (d.paymentsReady ? 'live' : 'warming up');
+  }).catch(function () {
+    pillPay.innerHTML = '<span class="led" style="background:var(--block)"></span> status unavailable';
+  });
+
+  function randomAddress() {
+    var hex = '0123456789abcdef';
+    var out = '0x';
+    for (var i = 0; i < 40; i++) out += hex[Math.floor(Math.random() * 16)];
+    return out;
+  }
+
+  document.querySelectorAll('.chip[data-addr]').forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      addrInput.value = chip.getAttribute('data-addr');
+      runScan();
+    });
+  });
+  document.getElementById('chip-fresh').addEventListener('click', function () {
+    addrInput.value = randomAddress();
+    runScan();
+  });
+
+  function badgeClass(verdict) {
+    if (verdict === 'block') return 'block';
+    if (verdict === 'caution') return 'caution';
+    return 'safe';
+  }
+
+  function runScan() {
+    var address = (addrInput.value || '').trim();
+    errorEl.textContent = '';
+    resultEl.classList.remove('show');
+    if (!address) { errorEl.textContent = 'Enter a wallet address first.'; return; }
+    scanBtn.disabled = true;
+    scanBtn.textContent = 'Scanning...';
+    fetch('/api/demo/screen', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ address: address }),
+    })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.d.error || 'Scan failed.');
+        var d = res.d;
+        badgeEl.className = 'verdict-badge ' + badgeClass(d.verdict);
+        badgeEl.textContent = d.verdict + ' · score ' + d.score;
+        recEl.textContent = d.recommendation;
+        flagsEl.innerHTML = '';
+        (d.flags || []).forEach(function (f) {
+          var li = document.createElement('li');
+          li.textContent = f.code + ' — ' + f.detail;
+          flagsEl.appendChild(li);
+        });
+        if (!d.flags || !d.flags.length) {
+          var li = document.createElement('li');
+          li.textContent = 'no risk flags raised';
+          flagsEl.appendChild(li);
+        }
+        resultEl.classList.add('show');
+      })
+      .catch(function (err) {
+        errorEl.textContent = err.message || 'Scan failed.';
+      })
+      .finally(function () {
+        scanBtn.disabled = false;
+        scanBtn.textContent = 'Scan wallet';
+      });
+  }
+
+  scanBtn.addEventListener('click', runScan);
+  addrInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') runScan(); });
+})();
+</script>
+</body>
+</html>
