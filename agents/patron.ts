@@ -5,7 +5,7 @@
  * a real agent would, paying real USD₮0 on X Layer at every step:
  *
  *   1. discover  GET  /            free — read the service card
- *   2. screen    POST /api/screen  $0.001 exact — "is this counterparty safe to pay?"
+ *   2. screen    POST /api/screen  $0.01 exact — "is this counterparty safe to pay?"
  *   3. audit     POST /api/audit   ≤$0.20 upto — adversarially test a target ASP
  *   4. certify   POST /api/certify $0.05 exact — buy the signed attestation
  *
@@ -75,7 +75,7 @@ console.log(`  found "${card.name}" — ${card.tagline}`);
 
 // ── 2. screen the counterparty ────────────────────────────────────────────────
 console.log(`\n② screen — should I ever pay ${COUNTERPARTY.slice(0, 10)}…?`);
-if (!decide("screen", 0.001)) process.exit(0);
+if (!decide("screen", 0.01)) process.exit(0);
 const screenOut = await payer.call(`${ARGUS_URL}/api/screen`, {
   method: "POST",
   headers: { "content-type": "application/json" },

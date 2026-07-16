@@ -49,7 +49,7 @@ pay-per-call, x402-gated, exactly what the deployed endpoints already are.
 
 ### Services (one ASP, three A2MCP services)
 
-**1. Wallet Risk Screening** — fee `0.001`
+**1. Wallet Risk Screening** — fee `0.01`
 > Instant safe / caution / block risk verdict on any wallet you're about to pay, from
 > live X Layer signals plus a sanctioned-address blocklist.
 > Provide the counterparty wallet address; get a scored verdict with specific risk flags

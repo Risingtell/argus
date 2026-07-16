@@ -5,7 +5,7 @@
  * via the OKX Agent Payments Protocol. Two surfaces, one trust engine:
  *
  *   Surface A — screen the WALLET before you pay it (day-one demand):
- *     POST /api/screen     x402 exact     $0.001  is this counterparty safe to pay?
+ *     POST /api/screen     x402 exact     $0.01   is this counterparty safe to pay?
  *
  *   Surface B — trust the SERVICE before you hire it (marketplace quality):
  *     POST /api/audit      x402 upto      ≤$0.20  adversarially test a target ASP
@@ -75,7 +75,7 @@ function mirrorChallengeInBody(
   };
 }
 
-const screenAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.001", maxTimeoutSeconds: 300 };
+const screenAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.01", maxTimeoutSeconds: 300 };
 const auditAccepts = { scheme: "upto", network: NETWORK, payTo: PAY_TO, price: "$0.20", maxTimeoutSeconds: 600 };
 const certifyAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.05", maxTimeoutSeconds: 300 };
 
@@ -172,7 +172,7 @@ app.get("/", (_req, res) =>
     tagline: "The trust bureau of the agent economy",
     paymentsReady,
     surfaces: {
-      screen: "POST /api/screen — $0.001 x402/exact — is this wallet safe to pay?",
+      screen: "POST /api/screen — $0.01 x402/exact — is this wallet safe to pay?",
       audit: "POST /api/audit — ≤$0.20 x402/upto metered — adversarially test a target ASP",
       certify: "POST /api/certify — $0.05 x402/exact — on-chain quality attestation",
       monitor: "POST /api/monitor — $0.05 MPP/charge+split — enroll for continuous monitoring",

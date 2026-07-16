@@ -8,7 +8,7 @@ Argus is that answer. It audits, certifies, and continuously monitors Agentic Se
 
 | Route | What you buy | Price | Payment |
 |---|---|---|---|
-| `POST /api/screen` | Counterparty risk verdict for a wallet — safe / caution / block | $0.001 | x402 **exact** |
+| `POST /api/screen` | Counterparty risk verdict for a wallet — safe / caution / block | $0.01 | x402 **exact** |
 | `POST /api/audit` | Adversarial audit of a target ASP: 5 paid probes, graded A–F | ≤ $0.20 metered | x402 **upto** |
 | `POST /api/certify` | Signed EIP-712 quality attestation for a passed audit | $0.05 | x402 **exact** |
 | `POST /api/monitor` | Continuous-monitoring enrollment, revenue split with rule-pack author | $0.05 | MPP **charge + splits** |
@@ -61,7 +61,7 @@ npm run smoke             # screen-engine spot check, no credentials needed
                         │  USD₮0, X Layer
                         ▼
    ┌────────────────── ARGUS ──────────────────┐
-   │  x402 exact ($0.001)   screen engine      │
+   │  x402 exact ($0.01)    screen engine      │
    │  x402 upto  (≤$0.20)   audit harness ─────┼──► pays target ASPs
    │  x402 exact ($0.05)    EIP-712 certify    │    (5 adversarial probes)
    │  MPP charge + splits   monitor enroll     │
