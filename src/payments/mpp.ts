@@ -92,8 +92,9 @@ export async function monitorEnrollHandler(req: ExReq, res: ExRes): Promise<void
   try {
     const result = await mpp().charge(chargeOpts)(toWeb(req));
     if (result.status === 402) return send(res, result.challenge);
-    const body = Response.json({ enrolled: true, subject: (req.body as { target?: string })?.target ?? null });
-    return send(res, result.withReceipt(body));
+    const reqBody = req.body as { target?: string; address?: string } | undefined;
+    const subject = reqBody?.target ?? reqBody?.address ?? null;
+    return send(res, result.withReceipt(Response.json({ enrolled: true, subject })));
   } catch (e) {
     res.status(500).json({ error: `monitor charge failed: ${(e as Error).message}` });
   }
