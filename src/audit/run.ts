@@ -4,7 +4,7 @@
  * number of probes actually executed (never above the buyer's signed cap).
  */
 import { randomUUID } from "node:crypto";
-import { X402Payer } from "./payer.js";
+import { X402Payer, type Preflight } from "./payer.js";
 import { PROBES, buildRequestInit, type ProbeContext, type ProbeResult } from "./probes.js";
 import { saveAudit } from "../store.js";
 
@@ -58,6 +58,41 @@ function gradeFor(score: number, anyCritical: boolean): Grade {
   return "F";
 }
 
+/**
+ * Fetch the target's unpaid 402 challenge and decide whether it's safe to pay
+ * against — fails closed (blocked) whenever the price can't be verified, not
+ * just when it's verified-and-too-high, so a broken or evasive target can't
+ * talk its way into an unbounded real payment.
+ */
+async function checkPriceSafety(
+  payer: X402Payer,
+  url: string,
+  requestInit: RequestInit,
+): Promise<{ preflight?: Preflight; blockedReason?: string }> {
+  const pre = await payer.preflight(url, requestInit).catch(() => null);
+  if (!pre) {
+    return { blockedReason: "Could not reach the target to verify its price before spending — paid probes skipped rather than pay blind." };
+  }
+  if (pre.status === 402 && !pre.challenge) {
+    // 402'd but the challenge didn't parse — could be a broken target, or a
+    // dishonest one deliberately garbling the free check while answering the
+    // real paid request normally. Either way, fail closed, not open.
+    return { preflight: pre, blockedReason: "Target returned a 402 with an unparseable payment challenge — paid probes skipped rather than pay against an unverifiable price." };
+  }
+  if (pre.challenge) {
+    const atomic = pre.challenge.quote?.value ? BigInt(pre.challenge.quote.value) : null;
+    if (atomic == null || atomic > MAX_SAFE_TARGET_ATOMIC) {
+      return {
+        preflight: pre,
+        blockedReason: `Target quotes ${formatUsd(atomic)} per call — above Argus's ${formatUsd(MAX_SAFE_TARGET_ATOMIC)} safe-audit ceiling; paid probes skipped rather than risk the buyer's $${CAP_USD.toFixed(2)} cap on one payment.`,
+      };
+    }
+  }
+  // pre.status !== 402 — target isn't payment-gated at all, so the shared paid
+  // probe can't actually spend anything against it either. No block needed.
+  return { preflight: pre };
+}
+
 export async function runAudit(target: AuditTarget): Promise<AuditReport> {
   const method = target.method ?? "POST";
   const key = process.env.BUYER_PRIVATE_KEY;
@@ -67,25 +102,9 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
 
   if (payer) {
     const requestInit = buildRequestInit(method, target.sampleBody);
-    const pre = await payer.preflight(target.url, requestInit).catch(() => null);
-    ctx.preflight = pre ?? undefined;
-    if (!pre) {
-      // Fetch itself failed (network error/timeout) — fail closed: we have no
-      // verified price, so paid probes must not spend blind against it.
-      ctx.blockedReason = "Could not reach the target to verify its price before spending — paid probes skipped rather than pay blind.";
-    } else if (pre.status === 402 && !pre.challenge) {
-      // 402'd but the challenge didn't parse — could be a broken target, or a
-      // dishonest one deliberately garbling the free check while answering the
-      // real paid request normally. Either way, fail closed, not open.
-      ctx.blockedReason = "Target returned a 402 with an unparseable payment challenge — paid probes skipped rather than pay against an unverifiable price.";
-    } else if (pre.challenge) {
-      const atomic = pre.challenge.quote?.value ? BigInt(pre.challenge.quote.value) : null;
-      if (atomic == null || atomic > MAX_SAFE_TARGET_ATOMIC) {
-        ctx.blockedReason = `Target quotes ${formatUsd(atomic)} per call — above Argus's ${formatUsd(MAX_SAFE_TARGET_ATOMIC)} safe-audit ceiling; paid probes skipped rather than risk the buyer's $${CAP_USD.toFixed(2)} cap on one payment.`;
-      }
-    }
-    // else: pre.status !== 402 — target isn't payment-gated at all, so the shared
-    // paid probe can't actually spend anything against it either. No block needed.
+    const gate = await checkPriceSafety(payer, target.url, requestInit);
+    ctx.preflight = gate.preflight;
+    ctx.blockedReason = gate.blockedReason;
   }
 
   const selected = target.only?.length ? PROBES.filter((p) => target.only!.includes(p.name)) : PROBES;
