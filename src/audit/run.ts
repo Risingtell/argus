@@ -10,6 +10,15 @@ import { saveAudit } from "../store.js";
 
 const PRICE_PER_TEST_USD = 0.04; // audit cap is $0.20 → up to 5 probes billed
 const CAP_USD = 0.2;
+// Every paid probe now shares a single real payment to the target (see probes.ts),
+// so worst case Argus spends the target's own per-call price once. Above this
+// ceiling that one payment alone could eat more than the buyer's $0.20 cap, so
+// paid probes are skipped rather than run at a loss. USD₮0, 6 decimals.
+const MAX_SAFE_TARGET_ATOMIC = 150_000n; // $0.15
+
+function formatUsd(atomic: bigint | null): string {
+  return atomic == null ? "an unreadable" : `$${(Number(atomic) / 1_000_000).toFixed(4)}`;
+}
 
 export interface AuditTarget {
   url: string;
@@ -50,6 +59,22 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
 
   const ctx: ProbeContext = { payer: payer as X402Payer, url: target.url, method, sampleBody: target.sampleBody };
 
+  if (payer) {
+    const requestInit: RequestInit =
+      method === "POST"
+        ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(target.sampleBody ?? {}) }
+        : { method: "GET" };
+    const quote = await payer.quote(target.url, requestInit).catch(() => null);
+    if (quote) {
+      const atomic = quote.value ? BigInt(quote.value) : null;
+      if (atomic == null || atomic > MAX_SAFE_TARGET_ATOMIC) {
+        ctx.blockedReason = `Target quotes ${formatUsd(atomic)} per call — above Argus's $0.15 safe-audit ceiling; paid probes skipped rather than risk the buyer's $0.20 cap on one payment.`;
+      }
+    }
+    // quote === null means the target never 402'd on the unpaid preflight, so the
+    // shared paid probe can't actually spend anything against it either — no block needed.
+  }
+
   const selected = target.only?.length ? PROBES.filter((p) => target.only!.includes(p.name)) : PROBES;
   const results: ProbeResult[] = [];
 
@@ -62,6 +87,7 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
         passed: false,
         severity: "warn",
         detail: "Auditor wallet not configured (BUYER_PRIVATE_KEY) — probe skipped.",
+        executed: false,
       });
       continue;
     }
@@ -84,7 +110,7 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
   const score = Math.round((earned / totalWeight) * 100);
   const anyCritical = results.some((r) => !r.passed && r.severity === "critical");
 
-  const testsRun = results.length;
+  const testsRun = results.filter((r) => r.executed !== false).length;
   const billed = Math.min(CAP_USD, testsRun * PRICE_PER_TEST_USD);
 
   const report: AuditReport = {

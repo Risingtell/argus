@@ -1,7 +1,7 @@
 # Argus — OKX.AI Genesis submission runbook
 
 Everything needed to take Argus from "working locally" to "listed and submitted."
-Deadline: **2026-07-17 23:59 UTC**. Do the steps in order.
+Deadline: **2026-07-27 23:59 UTC** (extended). Do the steps in order.
 
 ---
 
@@ -106,7 +106,7 @@ pay-per-call, x402-gated, exactly what the deployed endpoints already are.
 ### Google form
 
 Submit **https://forms.gle/mddEUagmDbyV37ws8** with the ASP details + the link to your X
-post, before 2026-07-17 23:59 UTC.
+post, before 2026-07-27 23:59 UTC.
 
 ---
 

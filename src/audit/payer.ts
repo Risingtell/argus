@@ -116,6 +116,14 @@ export class X402Payer {
     };
   }
 
+  /** Read-only price discovery: fetch unpaid and parse the 402 challenge, without ever paying. */
+  async quote(url: string, init: RequestInit = {}): Promise<Quote | null> {
+    const res = await fetch(url, init);
+    if (res.status !== 402) return null;
+    const paymentRequired = this.http.getPaymentRequiredResponse((n) => res.headers.get(n));
+    return firstAccept(paymentRequired);
+  }
+
   /** Single fetch with caller-supplied headers — used to replay a stale signature. */
   async raw(url: string, init: RequestInit, headers: Record<string, string>): Promise<CallOutcome> {
     const started = Date.now();

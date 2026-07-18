@@ -8,13 +8,19 @@
  */
 import { decodeEventLog, getAddress, parseAbiItem } from "viem";
 import { publicClient, USDT0 } from "../chain/xlayer.js";
-import type { X402Payer } from "./payer.js";
+import type { CallOutcome, X402Payer } from "./payer.js";
 
 export interface ProbeContext {
   payer: X402Payer;
   url: string;
   method: "GET" | "POST";
   sampleBody?: unknown;
+  /** Set by the orchestrator when the target's own price makes a full paid audit
+   *  unsafe to run — paid probes short-circuit without spending. */
+  blockedReason?: string;
+  /** Cache: the one real payment shared by every paid probe below, so a 5-probe
+   *  audit costs Argus at most one settlement instead of four. */
+  paidOutcome?: CallOutcome;
 }
 
 export interface ProbeResult {
@@ -25,6 +31,8 @@ export interface ProbeResult {
   severity: "info" | "warn" | "critical";
   detail: string;
   evidence?: Record<string, unknown>;
+  /** false when the probe spent nothing (payer unavailable or price-safety block) — excluded from billing. */
+  executed?: boolean;
 }
 
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
@@ -56,6 +64,18 @@ function init(ctx: ProbeContext): RequestInit {
     : { method: "GET" };
 }
 
+/** The one real payment shared by every probe below that needs to observe a paid delivery. */
+async function getSharedPayment(ctx: ProbeContext): Promise<CallOutcome> {
+  if (!ctx.paidOutcome) {
+    ctx.paidOutcome = await ctx.payer.call(ctx.url, init(ctx));
+  }
+  return ctx.paidOutcome;
+}
+
+function skipped(id: string, title: string, weight: number, reason: string): ProbeResult {
+  return { id, title, weight, passed: false, severity: "warn", detail: reason, executed: false };
+}
+
 /** 1. A payment-gated endpoint must answer an unpaid request with a well-formed 402. */
 async function challengeWellFormed(ctx: ProbeContext): Promise<ProbeResult> {
   const res = await fetch(ctx.url, init(ctx));
@@ -76,7 +96,8 @@ async function challengeWellFormed(ctx: ProbeContext): Promise<ProbeResult> {
 
 /** 2. After a valid payment, the service must actually deliver a response. */
 async function deliversAfterPayment(ctx: ProbeContext): Promise<ProbeResult> {
-  const out = await ctx.payer.call(ctx.url, init(ctx));
+  if (ctx.blockedReason) return skipped("delivers-after-payment", "Delivers the resource after payment", 25, ctx.blockedReason);
+  const out = await getSharedPayment(ctx);
   const delivered = out.httpStatus < 300 && out.rawBody.trim().length > 0;
   return {
     id: "delivers-after-payment",
@@ -93,7 +114,8 @@ async function deliversAfterPayment(ctx: ProbeContext): Promise<ProbeResult> {
 
 /** 3. The settlement the service reports must be real on X Layer: a USD₮0 transfer to its declared payee. */
 async function receiptMatchesChain(ctx: ProbeContext): Promise<ProbeResult> {
-  const out = await ctx.payer.call(ctx.url, init(ctx));
+  if (ctx.blockedReason) return skipped("receipt-onchain", "Reported settlement is real on-chain", 25, ctx.blockedReason);
+  const out = await getSharedPayment(ctx);
   const tx = out.settlement?.transaction;
   const expectedPayee = out.quote?.payTo;
   if (!tx) {
@@ -151,7 +173,8 @@ async function receiptMatchesChain(ctx: ProbeContext): Promise<ProbeResult> {
 
 /** 4. The service must not charge more than it quoted. */
 async function noOvercharge(ctx: ProbeContext): Promise<ProbeResult> {
-  const out = await ctx.payer.call(ctx.url, init(ctx));
+  if (ctx.blockedReason) return skipped("no-overcharge", "Settled amount does not exceed the quote", 15, ctx.blockedReason);
+  const out = await getSharedPayment(ctx);
   const quoted = out.quote?.value ? BigInt(out.quote.value) : null;
   // OKX's PAYMENT-RESPONSE leaves `amount` null, so trust the chain: the USD₮0
   // actually moved to the payee in the settlement tx is what the buyer was charged.
@@ -186,7 +209,8 @@ async function noOvercharge(ctx: ProbeContext): Promise<ProbeResult> {
 
 /** 5. A stale payment signature must not buy a second delivery (replay / double-spend of a receipt). */
 async function rejectsReplay(ctx: ProbeContext): Promise<ProbeResult> {
-  const paid = await ctx.payer.call(ctx.url, init(ctx));
+  if (ctx.blockedReason) return skipped("rejects-replay", "Rejects a replayed payment signature", 20, ctx.blockedReason);
+  const paid = await getSharedPayment(ctx);
   if (!paid.paymentHeaders || paid.httpStatus >= 300) {
     return {
       id: "rejects-replay",
