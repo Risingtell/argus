@@ -26,6 +26,8 @@ Auditing an API by reading its docs is theater. Argus pays the target and checks
 4. **No overcharge** — settled amount ≤ quoted amount, in base units.
 5. **Rejects replay** — a reused payment signature must not buy a second delivery.
 
+Probes 2-5 all pay against the *same* payment (one settlement, verified from every angle) rather than four independent ones, so auditing a target never costs Argus more than one call at that target's own price. If a target prices itself above Argus's safe-spend ceiling — or answers the free price check with something unverifiable — Argus declines to spend and returns grade **U** (unrated), never a false pass or fail.
+
 Failures are graded by severity (a fabricated receipt is not a style issue), the report is billed per probe executed under the buyer's signed `upto` cap, and a passing grade can be minted into an **EIP-712 attestation** any agent can verify offline — recover the signer, check the grade, no Argus API required.
 
 ## `argus wrap` — the onboarding funnel

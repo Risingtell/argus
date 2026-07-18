@@ -8,19 +8,26 @@
  */
 import { decodeEventLog, getAddress, parseAbiItem } from "viem";
 import { publicClient, USDT0 } from "../chain/xlayer.js";
-import type { CallOutcome, X402Payer } from "./payer.js";
+import type { CallOutcome, Preflight, X402Payer } from "./payer.js";
 
 export interface ProbeContext {
   payer: X402Payer;
   url: string;
   method: "GET" | "POST";
   sampleBody?: unknown;
+  /** The one unpaid 402 fetch shared by challengeWellFormed and every paid probe
+   *  below — set by the orchestrator before any probe runs. Paying against its
+   *  `.challenge` (rather than re-fetching) guarantees the price a probe checks
+   *  is the price it actually pays. */
+  preflight?: Preflight;
   /** Set by the orchestrator when the target's own price makes a full paid audit
    *  unsafe to run — paid probes short-circuit without spending. */
   blockedReason?: string;
-  /** Cache: the one real payment shared by every paid probe below, so a 5-probe
-   *  audit costs Argus at most one settlement instead of four. */
-  paidOutcome?: CallOutcome;
+  /** Cache: the in-flight/settled promise for the one real payment shared by every
+   *  paid probe below, so a 5-probe audit triggers at most one settlement instead
+   *  of four — cached as a Promise (not just the resolved value) so a probe that
+   *  throws mid-payment can't cause a second probe to retry and pay again. */
+  paidOutcome?: Promise<CallOutcome>;
 }
 
 export interface ProbeResult {
@@ -58,16 +65,27 @@ async function onchainSettledAmount(tx: string, payee: string): Promise<bigint |
   }
 }
 
-function init(ctx: ProbeContext): RequestInit {
-  return ctx.method === "POST"
-    ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ctx.sampleBody ?? {}) }
+export function buildRequestInit(method: "GET" | "POST", sampleBody?: unknown): RequestInit {
+  return method === "POST"
+    ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sampleBody ?? {}) }
     : { method: "GET" };
 }
 
-/** The one real payment shared by every probe below that needs to observe a paid delivery. */
-async function getSharedPayment(ctx: ProbeContext): Promise<CallOutcome> {
+function init(ctx: ProbeContext): RequestInit {
+  return buildRequestInit(ctx.method, ctx.sampleBody);
+}
+
+/**
+ * The one real payment shared by every probe below that needs to observe a paid
+ * delivery. Pays against `ctx.preflight.challenge` directly when one was already
+ * fetched (no second unpaid round-trip — the price checked is the price paid);
+ * falls back to a fresh `payer.call()` only when there's no challenge to reuse
+ * (e.g. the target isn't payment-gated at all, so nothing is actually spent).
+ */
+function getSharedPayment(ctx: ProbeContext): Promise<CallOutcome> {
   if (!ctx.paidOutcome) {
-    ctx.paidOutcome = await ctx.payer.call(ctx.url, init(ctx));
+    const challenge = ctx.preflight?.challenge;
+    ctx.paidOutcome = challenge ? ctx.payer.pay(ctx.url, init(ctx), challenge) : ctx.payer.call(ctx.url, init(ctx));
   }
   return ctx.paidOutcome;
 }
@@ -78,9 +96,8 @@ function skipped(id: string, title: string, weight: number, reason: string): Pro
 
 /** 1. A payment-gated endpoint must answer an unpaid request with a well-formed 402. */
 async function challengeWellFormed(ctx: ProbeContext): Promise<ProbeResult> {
-  const res = await fetch(ctx.url, init(ctx));
-  const hasHeader = !!res.headers.get("PAYMENT-REQUIRED") || !!res.headers.get("payment-required");
-  const passed = res.status === 402 && hasHeader;
+  const pre = ctx.preflight ?? (await ctx.payer.preflight(ctx.url, init(ctx)).catch(() => null));
+  const passed = pre?.status === 402 && pre.hasChallengeHeader;
   return {
     id: "challenge-wellformed",
     title: "Returns a well-formed 402 payment challenge",
@@ -89,8 +106,8 @@ async function challengeWellFormed(ctx: ProbeContext): Promise<ProbeResult> {
     severity: passed ? "info" : "critical",
     detail: passed
       ? "Unpaid request correctly challenged with PAYMENT-REQUIRED."
-      : `Expected 402 + PAYMENT-REQUIRED header; got ${res.status}${hasHeader ? "" : " with no challenge header"}.`,
-    evidence: { status: res.status, hasChallengeHeader: hasHeader },
+      : `Expected 402 + PAYMENT-REQUIRED header; got ${pre?.status ?? "no response"}${pre?.hasChallengeHeader ? "" : " with no challenge header"}.`,
+    evidence: { status: pre?.status ?? null, hasChallengeHeader: pre?.hasChallengeHeader ?? false },
   };
 }
 

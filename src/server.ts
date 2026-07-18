@@ -26,7 +26,7 @@ import {
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 import { UptoEvmScheme } from "@okxweb3/x402-evm/upto/server";
 import { screen } from "./engine/screen.js";
-import { runAudit } from "./audit/run.js";
+import { runAudit, CAP_USD } from "./audit/run.js";
 import { certify } from "./certify/attest.js";
 import { monitorEnrollHandler, watchSessionHandler } from "./payments/mpp.js";
 import { rateLimited } from "./demo/rateLimit.js";
@@ -76,7 +76,7 @@ function mirrorChallengeInBody(
 }
 
 const screenAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.01", maxTimeoutSeconds: 300 };
-const auditAccepts = { scheme: "upto", network: NETWORK, payTo: PAY_TO, price: "$0.20", maxTimeoutSeconds: 600 };
+const auditAccepts = { scheme: "upto", network: NETWORK, payTo: PAY_TO, price: `$${CAP_USD.toFixed(2)}`, maxTimeoutSeconds: 600 };
 const certifyAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.05", maxTimeoutSeconds: 300 };
 
 const httpServer = new x402HTTPResourceServer(resourceServer, {

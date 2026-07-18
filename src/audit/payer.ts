@@ -44,6 +44,22 @@ export interface CallOutcome {
   paymentHeaders: Record<string, string> | null;
 }
 
+type PaymentRequired = ReturnType<x402HTTPClient["getPaymentRequiredResponse"]>;
+
+/** A parsed, payable 402 challenge — pay against this exact object (never re-fetch) so the price a caller checked is guaranteed the price it pays. */
+export interface Challenge {
+  paymentRequired: PaymentRequired;
+  quote: Quote | null;
+}
+
+export interface Preflight {
+  res: Response;
+  status: number;
+  hasChallengeHeader: boolean;
+  /** non-null only when status is 402 AND the challenge parsed cleanly */
+  challenge: Challenge | null;
+}
+
 function parseBody(text: string): unknown {
   try {
     return JSON.parse(text);
@@ -72,14 +88,57 @@ export class X402Payer {
     this.http = new x402HTTPClient(client);
   }
 
-  /** Full pay-and-call: fetch, and if challenged, sign + replay once. */
+  /**
+   * Read-only: fetch unpaid and parse the 402 challenge, without ever paying.
+   * The single source of truth for "what does this endpoint cost right now" —
+   * `pay()` spends against the exact `Challenge` this returns, never a fresh
+   * one, so a price checked here can't drift from the price actually paid.
+   */
+  async preflight(url: string, init: RequestInit = {}): Promise<Preflight> {
+    const res = await fetch(url, init);
+    const hasChallengeHeader = !!res.headers.get("PAYMENT-REQUIRED") || !!res.headers.get("payment-required");
+    if (res.status !== 402) return { res, status: res.status, hasChallengeHeader, challenge: null };
+    try {
+      const paymentRequired = this.http.getPaymentRequiredResponse((n) => res.headers.get(n));
+      return { res, status: res.status, hasChallengeHeader, challenge: { paymentRequired, quote: firstAccept(paymentRequired) } };
+    } catch {
+      // 402'd but the challenge itself didn't parse — treat as no payable challenge,
+      // not as "free": callers must not silently proceed to pay against this.
+      return { res, status: res.status, hasChallengeHeader, challenge: null };
+    }
+  }
+
+  /** Complete a payment against an already-fetched `Challenge` — no second unpaid round-trip. */
+  async pay(url: string, init: RequestInit, challenge: Challenge): Promise<CallOutcome> {
+    const started = Date.now();
+    const payload = await this.http.createPaymentPayload(challenge.paymentRequired);
+    const paymentHeaders = this.http.encodePaymentSignatureHeader(payload);
+    const paid = await fetch(url, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), ...paymentHeaders },
+    });
+    const text = await paid.text();
+    const settlement = safeSettle(this.http, (n) => paid.headers.get(n));
+    return {
+      httpStatus: paid.status,
+      paid: paid.status < 300,
+      latencyMs: Date.now() - started,
+      rawBody: text,
+      body: parseBody(text),
+      quote: challenge.quote,
+      settlement,
+      paymentHeaders,
+    };
+  }
+
+  /** Full pay-and-call: fetch, and if challenged, sign + pay once. */
   async call(url: string, init: RequestInit = {}): Promise<CallOutcome> {
     const started = Date.now();
-    const first = await fetch(url, init);
-    if (first.status !== 402) {
-      const text = await first.text();
+    const pre = await this.preflight(url, init);
+    if (!pre.challenge) {
+      const text = await pre.res.text();
       return {
-        httpStatus: first.status,
+        httpStatus: pre.status,
         paid: false,
         latencyMs: Date.now() - started,
         rawBody: text,
@@ -89,39 +148,8 @@ export class X402Payer {
         paymentHeaders: null,
       };
     }
-
-    const getHeader = (name: string) => first.headers.get(name);
-    const paymentRequired = this.http.getPaymentRequiredResponse(getHeader);
-    const quote = firstAccept(paymentRequired);
-
-    const payload = await this.http.createPaymentPayload(paymentRequired);
-    const paymentHeaders = this.http.encodePaymentSignatureHeader(payload);
-
-    const paid = await fetch(url, {
-      ...init,
-      headers: { ...(init.headers as Record<string, string>), ...paymentHeaders },
-    });
-    const text = await paid.text();
-    const settlement = safeSettle(this.http, (n) => paid.headers.get(n));
-
-    return {
-      httpStatus: paid.status,
-      paid: paid.status < 300,
-      latencyMs: Date.now() - started,
-      rawBody: text,
-      body: parseBody(text),
-      quote,
-      settlement,
-      paymentHeaders,
-    };
-  }
-
-  /** Read-only price discovery: fetch unpaid and parse the 402 challenge, without ever paying. */
-  async quote(url: string, init: RequestInit = {}): Promise<Quote | null> {
-    const res = await fetch(url, init);
-    if (res.status !== 402) return null;
-    const paymentRequired = this.http.getPaymentRequiredResponse((n) => res.headers.get(n));
-    return firstAccept(paymentRequired);
+    const outcome = await this.pay(url, init, pre.challenge);
+    return { ...outcome, latencyMs: Date.now() - started };
   }
 
   /** Single fetch with caller-supplied headers — used to replay a stale signature. */
