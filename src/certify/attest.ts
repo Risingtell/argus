@@ -42,7 +42,10 @@ export interface Certificate {
 export async function certify(auditId: string): Promise<Certificate> {
   const audit = getAudit(auditId);
   if (!audit) throw new Error(`unknown auditId: ${auditId}`);
-  if (audit.grade === "F" || audit.grade === "U") throw new Error(`audit ${auditId} graded ${audit.grade} — not certifiable`);
+  if (audit.grade === "U") {
+    throw new Error(`audit ${auditId} graded U (unrated) — not certifiable. ${audit.incomplete ? "The target's own price or reachability kept Argus from safely finishing the paid checks; certify() can't attest to an incomplete audit." : ""}`);
+  }
+  if (audit.grade === "F") throw new Error(`audit ${auditId} graded F — not certifiable`);
 
   const key = process.env.MPP_MERCHANT_PRIVATE_KEY ?? process.env.BUYER_PRIVATE_KEY;
   if (!key) throw new Error("Argus signing key not configured (MPP_MERCHANT_PRIVATE_KEY)");

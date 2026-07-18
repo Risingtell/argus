@@ -79,6 +79,19 @@ const screenAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price:
 const auditAccepts = { scheme: "upto", network: NETWORK, payTo: PAY_TO, price: `$${CAP_USD.toFixed(2)}`, maxTimeoutSeconds: 600 };
 const certifyAccepts = { scheme: "exact", network: NETWORK, payTo: PAY_TO, price: "$0.05", maxTimeoutSeconds: 300 };
 
+// Spelled out with a concrete example body so a buyer (agent or human) reading
+// the 402 challenge or the discovery card knows the exact shape to send, not
+// just the English gist — two real buyers previously got stuck guessing this.
+const AUDIT_DESCRIPTION =
+  'Adversarially test a target ASP (5 checks, 1 real payment, graded A-F or U). ' +
+  'Body: {"target":{"url":"https://<target-endpoint>","method":"POST","sampleBody":{...}}}. ' +
+  "target.url must be the target's real, reachable, payment-gated endpoint — a label or placeholder will not work. " +
+  "Buyer signs a $0.20 cap; billed per probe actually run.";
+const CERTIFY_DESCRIPTION =
+  'Issue a signed EIP-712 quality attestation for a passed audit. Body: {"auditId":"<id>"}. ' +
+  "auditId must be the id returned by a PRIOR POST /api/audit call against THIS Argus instance — " +
+  "run /api/audit first and use the auditId from its response. Grade F or U audits cannot be certified.";
+
 const httpServer = new x402HTTPResourceServer(resourceServer, {
   "POST /api/screen": {
     description: "Counterparty risk verdict for a wallet - safe / caution / block",
@@ -91,14 +104,10 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
     ),
   },
   "POST /api/audit": {
-    description: "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
+    description: AUDIT_DESCRIPTION,
     mimeType: "application/json",
     accepts: auditAccepts,
-    unpaidResponseBody: mirrorChallengeInBody(
-      auditAccepts,
-      "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
-      "application/json",
-    ),
+    unpaidResponseBody: mirrorChallengeInBody(auditAccepts, AUDIT_DESCRIPTION, "application/json"),
   },
   // Some marketplace validators (e.g. OKX's `onchainos agent x402-check`) probe
   // a listed endpoint with an unpaid GET to confirm it answers the x402
@@ -107,24 +116,16 @@ const httpServer = new x402HTTPResourceServer(resourceServer, {
   // the same 402 challenge answer GET too, so the probe passes. Paid POST
   // metering below is untouched.
   "GET /api/audit": {
-    description: "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
+    description: AUDIT_DESCRIPTION,
     mimeType: "application/json",
     accepts: auditAccepts,
-    unpaidResponseBody: mirrorChallengeInBody(
-      auditAccepts,
-      "Adversarially test a target ASP; buyer signs a $0.20 cap, billed per test executed",
-      "application/json",
-    ),
+    unpaidResponseBody: mirrorChallengeInBody(auditAccepts, AUDIT_DESCRIPTION, "application/json"),
   },
   "POST /api/certify": {
-    description: "Issue a signed, on-chain-verifiable quality attestation for an audited ASP",
+    description: CERTIFY_DESCRIPTION,
     mimeType: "application/json",
     accepts: certifyAccepts,
-    unpaidResponseBody: mirrorChallengeInBody(
-      certifyAccepts,
-      "Issue a signed, on-chain-verifiable quality attestation for an audited ASP",
-      "application/json",
-    ),
+    unpaidResponseBody: mirrorChallengeInBody(certifyAccepts, CERTIFY_DESCRIPTION, "application/json"),
   },
 });
 
@@ -172,9 +173,9 @@ app.get("/", (_req, res) =>
     tagline: "The trust bureau of the agent economy",
     paymentsReady,
     surfaces: {
-      screen: "POST /api/screen — $0.01 x402/exact — is this wallet safe to pay?",
-      audit: "POST /api/audit — ≤$0.20 x402/upto metered — adversarially test a target ASP",
-      certify: "POST /api/certify — $0.05 x402/exact — on-chain quality attestation",
+      screen: "POST /api/screen — $0.01 x402/exact — is this wallet safe to pay? Body: {\"address\":\"0x...\"}",
+      audit: `POST /api/audit — ≤$${CAP_USD.toFixed(2)} x402/upto metered — ${AUDIT_DESCRIPTION}`,
+      certify: `POST /api/certify — $0.05 x402/exact — ${CERTIFY_DESCRIPTION}`,
       monitor: "POST /api/monitor — $0.05 MPP/charge+split — enroll for continuous monitoring",
       watch: "POST /session/watch — MPP session channel — pay-per-recheck",
     },
@@ -232,7 +233,23 @@ app.post("/api/screen", async (req, res) => {
 
 app.post("/api/audit", async (req, res) => {
   const { target } = req.body ?? {};
-  if (!target?.url) return res.status(400).json({ error: "body must include { target: { url, ... } }" });
+  if (!target?.url || typeof target.url !== "string") {
+    return res.status(400).json({
+      error: 'body must include { target: { url, method?, sampleBody? } }',
+      example: { target: { url: "https://your-target-asp.example.com/api/answer", method: "POST", sampleBody: {} } },
+    });
+  }
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(target.url);
+  } catch {
+    return res.status(400).json({
+      error: `target.url is not a valid URL: "${target.url}" — it must be the target ASP's real, reachable endpoint (e.g. "https://target.example.com/api/answer"), not a name or label.`,
+    });
+  }
+  if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
+    return res.status(400).json({ error: `target.url must be http(s), got "${parsedUrl.protocol}" in "${target.url}".` });
+  }
   const report = await runAudit(target);
   // Meter: bill only for tests actually executed, never above the signed cap.
   setSettlementOverrides(res, { amount: report.billedUsd });
@@ -241,11 +258,20 @@ app.post("/api/audit", async (req, res) => {
 
 app.post("/api/certify", async (req, res) => {
   const { auditId } = req.body ?? {};
-  if (!auditId) return res.status(400).json({ error: "body must include { auditId }" });
+  if (!auditId) {
+    return res.status(400).json({
+      error: "body must include { auditId } — the id returned by a prior POST /api/audit call against this Argus instance.",
+      example: { auditId: "<auditId from a POST /api/audit response>" },
+    });
+  }
   try {
     res.json(await certify(String(auditId)));
   } catch (e) {
-    res.status(400).json({ error: (e as Error).message });
+    const message = (e as Error).message;
+    const hint = message.startsWith("unknown auditId")
+      ? " — run POST /api/audit against this instance first, then pass the auditId it returns."
+      : "";
+    res.status(400).json({ error: message + hint });
   }
 });
 
