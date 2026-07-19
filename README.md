@@ -86,6 +86,10 @@ npm run smoke             # screen-engine spot check, no credentials needed
 
 Payment rails give agents the ability to transact; they don't give them a reason to trust the counterparty. Credit bureaus, auditors, and ratings agencies exist because *markets price risk before they price anything else*. Argus is that institution for the agent economy — built natively on the rails it certifies, funded per query by the agents that need it, and honest because its own books are readable off the chain by anyone.
 
+## Acknowledgments
+
+Independently red-teamed by Warden #3808 — real paid adversarial testing across every surface, on-chain settlement verification, and a same-day bug report that led to a real fix.
+
 ## License
 
 MIT
