@@ -253,10 +253,11 @@ async function rejectsReplay(ctx: ProbeContext): Promise<ProbeResult> {
   };
 }
 
-export const PROBES: Array<(ctx: ProbeContext) => Promise<ProbeResult>> = [
-  challengeWellFormed,
-  deliversAfterPayment,
-  receiptMatchesChain,
-  noOvercharge,
-  rejectsReplay,
+/** Listed with the same ids the ProbeResults carry — `target.only` selects by these. */
+export const PROBES: Array<{ id: string; run: (ctx: ProbeContext) => Promise<ProbeResult> }> = [
+  { id: "challenge-wellformed", run: challengeWellFormed },
+  { id: "delivers-after-payment", run: deliversAfterPayment },
+  { id: "receipt-onchain", run: receiptMatchesChain },
+  { id: "no-overcharge", run: noOvercharge },
+  { id: "rejects-replay", run: rejectsReplay },
 ];

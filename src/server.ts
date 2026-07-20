@@ -26,7 +26,7 @@ import {
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 import { UptoEvmScheme } from "@okxweb3/x402-evm/upto/server";
 import { screen } from "./engine/screen.js";
-import { runAudit, CAP_USD } from "./audit/run.js";
+import { runAudit, AuditRequestError, CAP_USD } from "./audit/run.js";
 import { certify } from "./certify/attest.js";
 import { monitorEnrollHandler, watchSessionHandler } from "./payments/mpp.js";
 import { rateLimited } from "./demo/rateLimit.js";
@@ -86,11 +86,12 @@ const AUDIT_DESCRIPTION =
   'Adversarially test a target ASP (5 checks, 1 real payment, graded A-F or U). ' +
   'Body: {"target":{"url":"https://<target-endpoint>","method":"POST","sampleBody":{...}}}. ' +
   "target.url must be the target's real, reachable, payment-gated endpoint — a label or placeholder will not work. " +
-  "Buyer signs a $0.20 cap; billed per probe actually run.";
+  "Buyer signs a $0.20 cap; billed per probe actually run. " +
+  'Optional target.only selects a subset by probe id (challenge-wellformed, delivers-after-payment, receipt-onchain, no-overcharge, rejects-replay); partial audits are not certifiable.';
 const CERTIFY_DESCRIPTION =
   'Issue a signed EIP-712 quality attestation for a passed audit. Body: {"auditId":"<id>"}. ' +
   "auditId must be the id returned by a PRIOR POST /api/audit call against THIS Argus instance — " +
-  "run /api/audit first and use the auditId from its response. Grade F or U audits cannot be certified.";
+  "run /api/audit first and use the auditId from its response. Grade F or U audits, and partial (target.only) audits, cannot be certified.";
 
 const httpServer = new x402HTTPResourceServer(resourceServer, {
   "POST /api/screen": {
@@ -250,7 +251,14 @@ app.post("/api/audit", async (req, res) => {
   if (parsedUrl.protocol !== "https:" && parsedUrl.protocol !== "http:") {
     return res.status(400).json({ error: `target.url must be http(s), got "${parsedUrl.protocol}" in "${target.url}".` });
   }
-  const report = await runAudit(target);
+  let report;
+  try {
+    report = await runAudit(target);
+  } catch (e) {
+    if (e instanceof AuditRequestError) return res.status(400).json({ error: e.message });
+    // Express 4 swallows async throws (request would hang) — answer explicitly.
+    return res.status(500).json({ error: `audit failed: ${(e as Error).message}` });
+  }
   // Meter: bill only for tests actually executed, never above the signed cap.
   setSettlementOverrides(res, { amount: report.billedUsd });
   res.json(report);

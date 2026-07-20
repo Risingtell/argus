@@ -9,6 +9,7 @@
  */
 import { keccak256, toHex, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { PROBES } from "../audit/probes.js";
 import { getAudit } from "../store.js";
 
 const DOMAIN = { name: "Argus", version: "1", chainId: 196 } as const;
@@ -46,6 +47,15 @@ export async function certify(auditId: string): Promise<Certificate> {
     throw new Error(`audit ${auditId} graded U (unrated) — not certifiable. ${audit.incomplete ? "The target's own price or reachability kept Argus from safely finishing the paid checks; certify() can't attest to an incomplete audit." : ""}`);
   }
   if (audit.grade === "F") throw new Error(`audit ${auditId} graded F — not certifiable`);
+  // A certificate must attest to the FULL adversarial suite. Without this, a
+  // buyer could audit their own endpoint with target.only=["challenge-wellformed"]
+  // (the one probe that never pays), score 100 on the free check alone, and buy
+  // a genuine Argus-signed "A" for $0.09 total — certificate farming.
+  if (audit.testsRun < PROBES.length) {
+    throw new Error(
+      `audit ${auditId} executed ${audit.testsRun}/${PROBES.length} probes (partial audit) — only full-suite audits are certifiable.`,
+    );
+  }
 
   const key = process.env.MPP_MERCHANT_PRIVATE_KEY ?? process.env.BUYER_PRIVATE_KEY;
   if (!key) throw new Error("Argus signing key not configured (MPP_MERCHANT_PRIVATE_KEY)");

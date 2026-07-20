@@ -11,12 +11,17 @@ import { saveAudit } from "../store.js";
 export const PRICE_PER_TEST_USD = 0.04; // audit cap is $0.20 → up to 5 probes billed
 export const CAP_USD = 0.2;
 // Every paid probe shares a single real payment to the target (see probes.ts), so
-// worst case Argus spends the target's own per-call price once. Derived from
-// CAP_USD (not an independent literal) so the two can never drift out of sync:
-// above this fraction of the buyer's cap, that one payment alone risks eating
-// it, so paid probes are skipped rather than run at a loss. USD₮0, 6 decimals.
+// worst case Argus spends the target's own per-call price once. The ceiling on
+// that payment is derived from what THIS audit will actually bill (selected
+// probes × per-test price, never above the cap) — not from the flat cap.
+// Deriving from the cap would let a buyer select one $0.04 probe via `only` and
+// steer Argus into a $0.15 payment to the buyer's own endpoint: a repeatable
+// $0.11 treasury drain. Above this fraction of the audit's own revenue, paid
+// probes are skipped rather than run at a loss. USD₮0, 6 decimals.
 const SAFE_SPEND_FRACTION = 0.75;
-const MAX_SAFE_TARGET_ATOMIC = BigInt(Math.round(CAP_USD * SAFE_SPEND_FRACTION * 1_000_000));
+function maxSafeTargetAtomic(billableUsd: number): bigint {
+  return BigInt(Math.round(billableUsd * SAFE_SPEND_FRACTION * 1_000_000));
+}
 
 function formatUsd(atomic: bigint | null): string {
   return atomic == null ? "an unverifiable amount" : `$${(Number(atomic) / 1_000_000).toFixed(4)}`;
@@ -68,7 +73,9 @@ async function checkPriceSafety(
   payer: X402Payer,
   url: string,
   requestInit: RequestInit,
+  billableUsd: number,
 ): Promise<{ preflight?: Preflight; blockedReason?: string }> {
+  const maxSafeAtomic = maxSafeTargetAtomic(billableUsd);
   const pre = await payer.preflight(url, requestInit).catch(() => null);
   if (!pre) {
     return { blockedReason: "Could not reach the target to verify its price before spending — paid probes skipped rather than pay blind." };
@@ -81,10 +88,10 @@ async function checkPriceSafety(
   }
   if (pre.challenge) {
     const atomic = pre.challenge.quote?.value ? BigInt(pre.challenge.quote.value) : null;
-    if (atomic == null || atomic > MAX_SAFE_TARGET_ATOMIC) {
+    if (atomic == null || atomic > maxSafeAtomic) {
       return {
         preflight: pre,
-        blockedReason: `Target quotes ${formatUsd(atomic)} per call — above Argus's ${formatUsd(MAX_SAFE_TARGET_ATOMIC)} safe-audit ceiling; paid probes skipped rather than risk the buyer's $${CAP_USD.toFixed(2)} cap on one payment.`,
+        blockedReason: `Target quotes ${formatUsd(atomic)} per call — above this audit's ${formatUsd(maxSafeAtomic)} safe-spend ceiling (${Math.round(SAFE_SPEND_FRACTION * 100)}% of the $${billableUsd.toFixed(2)} it can bill); paid probes skipped rather than run at a loss.`,
       };
     }
   }
@@ -93,28 +100,42 @@ async function checkPriceSafety(
   return { preflight: pre };
 }
 
+/** Thrown when the request itself is malformed (e.g. unknown probe ids) — the route maps it to a 400, never a grade. */
+export class AuditRequestError extends Error {}
+
 export async function runAudit(target: AuditTarget): Promise<AuditReport> {
   const method = target.method ?? "POST";
   const key = process.env.BUYER_PRIVATE_KEY;
   const payer = key ? new X402Payer(key) : null;
 
+  const selected = target.only?.length ? PROBES.filter((p) => target.only!.includes(p.id)) : PROBES;
+  if (!selected.length) {
+    // Zero matched probes must never produce a graded report — an untested
+    // target graded "F" (score 0 over no tests) would be a fabricated verdict.
+    throw new AuditRequestError(
+      `target.only matched no probes — valid ids: ${PROBES.map((p) => p.id).join(", ")}.`,
+    );
+  }
+
   const ctx: ProbeContext = { payer: payer as X402Payer, url: target.url, method, sampleBody: target.sampleBody };
 
   if (payer) {
     const requestInit = buildRequestInit(method, target.sampleBody);
-    const gate = await checkPriceSafety(payer, target.url, requestInit);
+    // Ceiling scales with what this audit can actually bill, so a partial-probe
+    // audit can never spend more on the target than it earns from the buyer.
+    const billableUsd = Math.min(CAP_USD, selected.length * PRICE_PER_TEST_USD);
+    const gate = await checkPriceSafety(payer, target.url, requestInit, billableUsd);
     ctx.preflight = gate.preflight;
     ctx.blockedReason = gate.blockedReason;
   }
 
-  const selected = target.only?.length ? PROBES.filter((p) => target.only!.includes(p.name)) : PROBES;
   const results: ProbeResult[] = [];
 
   for (const probe of selected) {
     if (!payer) {
       results.push({
-        id: probe.name,
-        title: probe.name,
+        id: probe.id,
+        title: probe.id,
         weight: 0,
         passed: false,
         severity: "warn",
@@ -124,11 +145,11 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
       continue;
     }
     try {
-      results.push(await probe(ctx));
+      results.push(await probe.run(ctx));
     } catch (e) {
       results.push({
-        id: probe.name,
-        title: probe.name,
+        id: probe.id,
+        title: probe.id,
         weight: 10,
         passed: false,
         severity: "warn",
