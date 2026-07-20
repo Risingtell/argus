@@ -1,120 +1,109 @@
 # Argus — OKX.AI Genesis submission runbook
 
-Everything needed to take Argus from "working locally" to "listed and submitted."
-Deadline: **2026-07-27 23:59 UTC** (extended). Do the steps in order.
+Deadline: **2026-07-27 23:59 UTC**.
+
+Steps 1 and 2 (deploy, list) are **done**. What's left is Step 3: record, post, submit.
+
+| | |
+|---|---|
+| Live service | https://argus-qt77.onrender.com |
+| Landing page + free demo | https://argus-qt77.onrender.com/site |
+| OKX.AI Agent ID | **#5246** (listed, live, review passed) |
+| Repo | https://github.com/Risingtell/argus |
+| Network | X Layer (eip155:196), settled in USD₮0 |
 
 ---
 
-## Step 1 — Deploy the ASP (get a permanent public URL)
+## ✅ Step 1 — Deployed
 
-Argus needs a persistent process (file-backed audit store, MPP session state, the
-facilitator warm-up loop), so it runs as a **web service**, not a serverless function.
-Render's blueprint is already committed (`render.yaml`).
+Render web service from the committed `render.yaml` (persistent process: file-backed
+audit store, MPP session state, facilitator warm-up loop). Health check:
+`https://argus-qt77.onrender.com/healthz` → `{"ok":true,"paymentsReady":true}`.
 
-1. Go to **render.com** and sign in with GitHub.
-2. **New +** → **Blueprint** → pick the repo **Risingtell/argus**. Render reads `render.yaml`.
-3. Set the secret env vars (copy the values from your local `C:\Users\HP\argus\.env` —
-   do **not** paste them anywhere public):
-   `OKX_API_KEY`, `OKX_SECRET_KEY`, `OKX_PASSPHRASE`, `PAY_TO`,
-   `MPP_MERCHANT_PRIVATE_KEY`, `MPP_SECRET_KEY`, `SPLIT_PARTNER`, `BUYER_PRIVATE_KEY`.
-   (Leave `OKX_BASE_URL` unset — Render reaches web3.okx.com directly, no relay needed.)
-4. **Apply** and wait for the build. You'll get a URL like `https://argus.onrender.com`.
-5. Confirm it's healthy: open `https://<your-url>/healthz` — it should read
-   `{"ok":true,"paymentsReady":true}`. If `paymentsReady` is false, give it a minute
-   (facilitator warm-up) and refresh.
+> Free tier sleeps after ~15 min idle (first call then takes ~50s). **Ping it right before
+> recording the demo and before the judges' review window**, or bump to the $7/mo instance.
 
-> Free tier sleeps after ~15 min idle (first call then takes ~50s). For the OKX review
-> window and the live demo, either ping it to keep it warm or bump to the $7/mo instance
-> so it's always on.
+## ✅ Step 2 — Listed on OKX.AI
 
-**After deploy, replace `https://argus.onrender.com` below with your real URL.**
+Agent **#5246**, three A2MCP services, review passed. Live prices as listed:
+
+| Service | Fee | Endpoint |
+|---|---|---|
+| Wallet Risk Screening | `0.01` | `/api/screen` |
+| Agent Service Audit | `0.2` | `/api/audit` |
+| On-chain Quality Certificate | `0.05` | `/api/certify` |
+
+Plus two MPP surfaces not listed as separate services: `/api/monitor` (charge + 10% split
+to the rule-pack author) and `/session/watch` (session channel, per-recheck vouchers).
 
 ---
 
-## Step 2 — List Argus as an ASP on OKX.AI
+## Step 3 — Record, post, submit
 
-Done through the OKX Onchain OS agent flow + your Agentic Wallet (email login), which
-writes the identity on-chain. Argus registers as an **Agent-to-MCP (A2MCP)** provider —
-pay-per-call, x402-gated, exactly what the deployed endpoints already are.
+### 90-second demo script
 
-### ASP identity
+Anchor on the **live `/site` page**, not the raw JSON card — it has the pitch, live
+pricing, on-chain evidence, and a free demo widget a judge can click without a wallet.
 
-- **Name:** `Argus`
-- **Description:**
-  > The trust bureau of the agent economy. Argus vets other agent services before you
-  > hire them and screens counterparty wallets before you pay them — by actually paying
-  > the target and verifying every receipt on-chain. Pre-hire trust for the agent
-  > marketplace, settled per query in USD₮0 on X Layer.
-- **Avatar:** required, square (1:1), ≤1MB. *(the one asset still to make — see note below)*
+| Time | Show | Say |
+|---|---|---|
+| 0:00 | `/site` hero | "Argus is the trust bureau of the agent economy." |
+| 0:12 | Free demo widget — screen a flagged wallet, live verdict | "Before your agent pays anyone, it can ask Argus whether that wallet is safe — free to try, right here." |
+| 0:30 | `npm run patron` — screen step, real $0.01 settlement | "Same call, paid: a real USD₮0 settlement on X Layer." |
+| 0:45 | Audit step — 5 probes, grade | "It audits other agent services by actually *being their customer* — paying them and checking whether the receipt they hand back is real on-chain." |
+| 1:05 | Certify step — EIP-712 certificate | "A service that passes gets a signed certificate any agent can verify offline." |
+| 1:15 | `npm run verify` — 37 settlements re-derived from chain | "Every number Argus claims is re-derived straight from X Layer. No database, no API — just the chain." |
+| 1:28 | okx.ai listing #5246 | "Argus. Pre-hire trust for the agent economy." |
 
-### Services (one ASP, three A2MCP services)
+Record with the service already warm. `npm run patron` needs the auditor wallet funded
+(currently `$0.918605` USD₮0 — enough for a full screen→audit→certify pass).
 
-**1. Wallet Risk Screening** — fee `0.01`
-> Instant safe / caution / block risk verdict on any wallet you're about to pay, from
-> live X Layer signals plus a sanctioned-address blocklist.
-> Provide the counterparty wallet address; get a scored verdict with specific risk flags
-> and a pay / don't-pay recommendation.
-- Endpoint: `https://argus.onrender.com/api/screen`
-
-**2. Agent Service Audit** — fee `0.2`
-> Adversarial honesty audit of another agent service: five paid probes check 402
-> compliance, delivery, on-chain receipt truth, overcharging and replay, graded A–F.
-> Provide the target service's endpoint URL and a sample request; get a graded report,
-> billed only for the probes actually run.
-- Endpoint: `https://argus.onrender.com/api/audit`
-
-**3. On-chain Quality Certificate** — fee `0.05`
-> Turns a passed audit into a signed, verifiable EIP-712 quality attestation any agent
-> can check offline before hiring the service.
-> Provide the audit ID from a prior audit; get a signed certificate with grade, score
-> and expiry.
-- Endpoint: `https://argus.onrender.com/api/certify`
-
-> OKX reviews within 24h; the result comes to the email on your Agentic Wallet and in the
-> agent window. An unreviewed/failed listing is still reachable by Agent ID, but must pass
-> and go live to count for the hackathon.
-
----
-
-## Step 3 — X post + Google form
-
-### X post (include #OKXAI + a ≤90s demo clip)
+### X post (must include #OKXAI + the demo clip)
 
 > Meet **Argus** — the trust bureau of the agent economy, live on OKX.AI.
 >
 > Before your agent pays a wallet or hires another service, Argus vets it — by *actually
 > paying the target* and verifying every receipt on-chain. Wallet risk screening,
-> adversarial service audits, and signed on-chain quality certificates, all settled
-> per-query in USD₮0 on X Layer.
+> adversarial service audits, and signed EIP-712 quality certificates, settled per query
+> in USD₮0 on X Layer.
 >
-> Demo: an autonomous buyer agent screens a wallet, audits a service (grade A, 5 probes),
-> and buys a certificate — 3 real settlements, 100% on-chain, zero humans.
+> 37 real settlements. Buyers who aren't me. Independently red-teamed by another live
+> ASP, who found a real bug — fixed the same day.
+>
+> Re-derive every number yourself: `npm run verify` reads it straight off X Layer.
 >
 > #OKXAI
 
-### 90-second demo script
-
-| Time | Show | Say |
-|---|---|---|
-| 0:00 | `GET /` service card | "This is Argus — the trust bureau of the agent economy." |
-| 0:10 | `npm run patron`, screen step (Tornado → BLOCK, Permit2 → SAFE) | "It screens counterparty wallets before you pay them." |
-| 0:30 | audit step — $0.20 paid, 5 probes, grade A | "It audits other agent services by really paying them and checking the receipts on-chain." |
-| 0:55 | certify step — EIP-712 certificate | "A passing service gets a signed, verifiable certificate." |
-| 1:05 | `npm run verify` — 23 real settlements | "Every payment is real, re-derived straight from X Layer — check any tx on OKLink." |
-| 1:20 | the okx.ai listing | "Argus. Pre-hire trust for the agent economy." |
-
 ### Google form
 
-Submit **https://forms.gle/mddEUagmDbyV37ws8** with the ASP details + the link to your X
-post, before 2026-07-27 23:59 UTC.
+**https://forms.gle/mddEUagmDbyV37ws8** — ASP name, Agent ID **5246**, description, type,
+X post link. Submit before **2026-07-27 23:59 UTC**.
+
+> Submit the form **twice** — once for Argus (#5246), once for VigilOK (#6032). The form
+> takes one Agent ID per submission. VigilOK's own runbook: `C:\Users\HP\vigilok\SUBMISSION.md`.
 
 ---
 
-## Live proof (already on-chain)
+## Live proof (re-derived from chain, 2026-07-20)
 
-- 23 real USD₮0 settlements on X Layer, self-audit grades **A (100/100)**, EIP-712 certs issued.
-- Re-derive it yourself: `npm run verify`.
-- Sample txs (OKLink → https://www.oklink.com/x-layer):
-  - screen `0x88aac1b962dd19ccde86e42f22d8bd4454446e610b96ce2854815f827a48b94c`
-  - audit `0x5b23872adc0836785072a0d3efbbb66d3762fdd7209f9df4f99673db4cb5dd96`
-  - certify `0xe0fbfc894ad422a426ede1e634cde8d69cab465844417836d08f7ddc8f1fe2dc`
+`npm run verify` scans USD₮0 Transfer logs into the treasury from a fixed genesis block —
+no Argus API, no database involved:
+
+- **37 settlements · 4 distinct payer wallets · $1.1260 USD₮0** into treasury
+  `0x70146b6152ad60ddA4628a618f0515f6305A34c2`.
+- Payers include buyers with no connection to this project, a peer ASP's red-team wallet,
+  and OKX-escrow-routed marketplace purchases — not only our own demo agent.
+- Self-audit grades **A (100/100)**, all 5 probes passing; EIP-712 certificates issued.
+
+Sample txs (OKLink → https://www.oklink.com/x-layer/tx/`<hash>`):
+
+- screen `0x88aac1b962dd19ccde86e42f22d8bd4454446e610b96ce2854815f827a48b94c`
+- audit `0x5b23872adc0836785072a0d3efbbb66d3762fdd7209f9df4f99673db4cb5dd96`
+- certify `0xe0fbfc894ad422a426ede1e634cde8d69cab465844417836d08f7ddc8f1fe2dc`
+
+## Independent review
+
+Red-teamed by **Warden #3808** (a live ASP in the same campaign, not affiliated): real
+paid adversarial calls across every surface, on-chain verification of each settlement,
+malformed-input and replay attempts, and a recursive self-audit attempt. One real bug
+found and fixed the same session; credited in the README acknowledgments.

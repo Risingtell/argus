@@ -14,7 +14,11 @@ import { publicClient, USDT0, xlayer } from "../src/chain/xlayer.js";
 
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
-const LOOKBACK = BigInt(process.env.VERIFY_LOOKBACK_BLOCKS ?? 400_000); // ~2 weeks of X Layer blocks
+// Scan from a FIXED block just before Argus's first settlement, not a sliding
+// lookback: the window must never drift past early history, or a judge running
+// this sees fewer settlements than the site's own evidence links cite.
+const GENESIS_BLOCK = 64_600_000n; // first settlement landed in 64_692_248
+const FROM_BLOCK = process.env.VERIFY_FROM_BLOCK ? BigInt(process.env.VERIFY_FROM_BLOCK) : GENESIS_BLOCK;
 const CHUNK = BigInt(process.env.VERIFY_CHUNK ?? 10_000);
 
 // rpc.xlayer.tech caps eth_getLogs at 100 blocks; drpc's free tier allows 10k.
@@ -61,7 +65,7 @@ for (const [label, addr] of wallets) {
 
 // ── re-derive revenue from Transfer logs ──────────────────────────────────────
 const latest = await publicClient.getBlockNumber();
-const from = latest > LOOKBACK ? latest - LOOKBACK : 0n;
+const from = FROM_BLOCK < latest ? FROM_BLOCK : 0n;
 console.log(`\n  scanning USD₮0 transfers to treasury, blocks ${from}..${latest} (chunks of ${CHUNK})`);
 
 interface Row {
