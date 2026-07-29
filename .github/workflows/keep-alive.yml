@@ -1,0 +1,50 @@
+# Render's free tier spins a service down after 15 minutes of inactivity, and a cold
+# start takes 35-55 seconds, which is long enough for a reviewer's HTTP client to time
+# out and read a healthy service as dead.
+#
+# This pings the three live services so they stay warm. It is deliberately time-boxed:
+# a free workspace gets 750 instance-hours per calendar month across ALL free services,
+# and exhausting them suspends every free service until the next month. Three services
+# kept warm around the clock would cost ~2,160 hours, so running this indefinitely would
+# take the services offline rather than keep them up.
+#
+# Window: stops automatically after STOP_AFTER. Roughly 504 instance-hours over 7 days.
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    env:
+      STOP_AFTER: "20260805"
+    steps:
+      - name: Check the window is still open
+        id: window
+        run: |
+          today="$(date -u +%Y%m%d)"
+          if [ "$today" -gt "$STOP_AFTER" ]; then
+            echo "Keep-alive window closed on $STOP_AFTER (today $today). Skipping to protect the instance-hour budget."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Window open (today $today, stops after $STOP_AFTER)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ping services
+        if: steps.window.outputs.skip != 'true'
+        run: |
+          fail=0
+          for u in \
+            https://argus-qt77.onrender.com/healthz \
+            https://vigilok.onrender.com/healthz \
+            https://oddsmith.onrender.com/healthz
+          do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$u" || echo 000)"
+            echo "$u -> $code"
+            [ "$code" = "200" ] || fail=1
+          done
+          exit "$fail"
