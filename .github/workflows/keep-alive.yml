@@ -8,7 +8,16 @@
 # kept warm around the clock would cost ~2,160 hours, so running this indefinitely would
 # take the services offline rather than keep them up.
 #
-# Window: stops automatically after STOP_AFTER. Roughly 504 instance-hours over 7 days.
+# Window: stops automatically after STOP_AFTER.
+#
+# Extended 2026-08-04: OKX's own reward announcement was scheduled 2026-08-03
+# but hadn't posted results yet as of this check, so the judging window status
+# is unconfirmed rather than closed. August's 750-hour budget resets fresh on
+# the 1st; this workflow had already committed Aug 1-5 (5 days x 72hrs/day for
+# 3 services = 360hrs). Extending to Aug 9 adds 4 more days (288hrs, total
+# 648hrs), leaving ~100hrs of headroom for the rest of the month's organic
+# traffic. Re-extend from here if judging is still visibly open when this date
+# arrives — do not just delete the limit, re-do the budget arithmetic first.
 name: keep-alive
 
 on:
@@ -20,7 +29,7 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     env:
-      STOP_AFTER: "20260805"
+      STOP_AFTER: "20260809"
     steps:
       - name: Check the window is still open
         id: window
