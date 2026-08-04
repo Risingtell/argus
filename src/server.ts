@@ -33,8 +33,25 @@ import { rateLimited } from "./demo/rateLimit.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Fail loudly at boot rather than silently serving broken payment surfaces.
+// A missing PAY_TO in particular must never fall back to a default: it would
+// quote a real burn address in every 402 challenge and buyer funds would be
+// unrecoverable. Checked before anything else touches these values.
+function requireEnv(names: string[]): void {
+  const missing = names.filter((n) => !process.env[n]?.trim());
+  if (missing.length > 0) {
+    console.error(`Missing required environment variable(s): ${missing.join(", ")} — refusing to start.`);
+    process.exit(1);
+  }
+}
+requireEnv(["PAY_TO", "OKX_API_KEY", "OKX_SECRET_KEY", "OKX_PASSPHRASE", "MPP_MERCHANT_PRIVATE_KEY", "MPP_SECRET_KEY"]);
+if (process.env.PAY_TO === "0x0000000000000000000000000000000000000000") {
+  console.error("PAY_TO is the zero address — refusing to start (payments would be unrecoverable).");
+  process.exit(1);
+}
+
 const PORT = Number(process.env.PORT ?? 4000);
-const PAY_TO = process.env.PAY_TO ?? "0x0000000000000000000000000000000000000000";
+const PAY_TO = process.env.PAY_TO!;
 const NETWORK = "eip155:196" as const; // X Layer mainnet — the only supported network
 
 const facilitatorClient = new OKXFacilitatorClient({

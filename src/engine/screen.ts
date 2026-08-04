@@ -68,21 +68,6 @@ export async function screen(input: string): Promise<ScreenResult> {
     });
   }
 
-  if (signals.history?.interactedWithFlagged) {
-    flags.push({
-      code: "flagged-counterparty",
-      weight: 40,
-      detail: "Has transacted with a flagged address",
-    });
-  }
-  if (signals.history?.firstSeenDaysAgo != null && signals.history.firstSeenDaysAgo < 2) {
-    flags.push({
-      code: "very-new",
-      weight: 20,
-      detail: `First seen ${signals.history.firstSeenDaysAgo}d ago`,
-    });
-  }
-
   const score = Math.min(100, flags.reduce((s, f) => s + f.weight, 0));
   const verdict = verdictFor(score, hardBlock);
 

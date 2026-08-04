@@ -69,11 +69,19 @@ const swap = await okx(
 if (swap.code !== "0") throw new Error(`swap quote failed: ${JSON.stringify(swap)}`);
 const tx = swap.data[0].tx;
 console.log(`swapping via ${swap.data[0].routerResult?.dexRouterList?.[0]?.dexProtocol?.[0]?.dexName ?? "OKX router"}…`);
+// Don't trust the aggregator's suggested gas verbatim — it has measured up to
+// ~30% under what a swap actually needs on X Layer, and an under-provisioned
+// swap burns the whole limit and reverts rather than failing cheaply.
+const value = BigInt(tx.value ?? "0");
+const estimated = await pub.estimateGas({ account, to: tx.to as `0x${string}`, data: tx.data as Hex, value });
+let gasLimit = (estimated * 13n) / 10n;
+const suggested = tx.gas ? BigInt(tx.gas) : 0n;
+if (suggested > gasLimit) gasLimit = suggested;
 const swapHash = await wallet.sendTransaction({
   to: tx.to as `0x${string}`,
   data: tx.data as Hex,
-  value: BigInt(tx.value ?? "0"),
-  gas: tx.gas ? BigInt(tx.gas) : undefined,
+  value,
+  gas: gasLimit,
 });
 console.log(`  swap tx ${swapHash}`);
 const rcpt = await pub.waitForTransactionReceipt({ hash: swapHash });

@@ -10,7 +10,7 @@
 import { keccak256, toHex, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { PROBES } from "../audit/probes.js";
-import { getAudit } from "../store.js";
+import { verifyAuditToken, InvalidAuditTokenError } from "../audit/token.js";
 
 const DOMAIN = { name: "Argus", version: "1", chainId: 196 } as const;
 
@@ -41,10 +41,17 @@ export interface Certificate {
 }
 
 export async function certify(auditId: string): Promise<Certificate> {
-  const audit = getAudit(auditId);
-  if (!audit) throw new Error(`unknown auditId: ${auditId}`);
+  let audit: ReturnType<typeof verifyAuditToken>;
+  try {
+    audit = verifyAuditToken(auditId);
+  } catch (e) {
+    if (e instanceof InvalidAuditTokenError) throw new Error(`unknown auditId: ${auditId}`);
+    throw e;
+  }
   if (audit.grade === "U") {
-    throw new Error(`audit ${auditId} graded U (unrated) — not certifiable. ${audit.incomplete ? "The target's own price or reachability kept Argus from safely finishing the paid checks; certify() can't attest to an incomplete audit." : ""}`);
+    throw new Error(
+      `audit ${auditId} graded U (unrated) — not certifiable. The target's own price or reachability kept Argus from safely finishing the paid checks; certify() can't attest to an incomplete audit.`,
+    );
   }
   if (audit.grade === "F") throw new Error(`audit ${auditId} graded F — not certifiable`);
   // A certificate must attest to the FULL adversarial suite. Without this, a

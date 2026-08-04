@@ -3,10 +3,9 @@
  * persists the report, and returns it. The `audit` route meters billing by the
  * number of probes actually executed (never above the buyer's signed cap).
  */
-import { randomUUID } from "node:crypto";
 import { X402Payer, type Preflight } from "./payer.js";
 import { PROBES, buildRequestInit, type ProbeContext, type ProbeResult } from "./probes.js";
-import { saveAudit } from "../store.js";
+import { signAuditToken } from "./token.js";
 
 export const PRICE_PER_TEST_USD = 0.04; // audit cap is $0.20 → up to 5 probes billed
 export const CAP_USD = 0.2;
@@ -172,11 +171,24 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
   const incomplete = results.some((r) => r.executed === false);
   const grade = incomplete ? "U" : gradeFor(score, anyCritical);
 
+  const auditedAt = new Date().toISOString();
+  // The auditId itself carries the certifiable result (see token.ts) so
+  // certify() never depends on this process still being alive later — it
+  // works identically across a restart, a redeploy, or a different instance
+  // entirely, none of which a local file store can promise.
+  const auditId = signAuditToken({
+    target: target.url,
+    grade,
+    score,
+    testsRun,
+    issuedAt: Math.floor(Date.now() / 1000),
+  });
+
   const report: AuditReport = {
-    auditId: randomUUID(),
+    auditId,
     target: target.url,
     method,
-    auditedAt: new Date().toISOString(),
+    auditedAt,
     score,
     grade,
     incomplete,
@@ -185,6 +197,5 @@ export async function runAudit(target: AuditTarget): Promise<AuditReport> {
     billedUsd: `$${billed.toFixed(2)}`,
     auditorAddress: payer?.address ?? null,
   };
-  saveAudit(report);
   return report;
 }

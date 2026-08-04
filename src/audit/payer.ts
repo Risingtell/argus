@@ -9,11 +9,59 @@
  * `accepts` entry; replay with `PAYMENT-SIGNATURE`; settlement comes back in
  * `PAYMENT-RESPONSE` (→ status / transaction / amount / payer).
  */
+import dns from "node:dns/promises";
+import net from "node:net";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
 import { x402Client, x402HTTPClient } from "@okxweb3/x402-core/client";
 import { registerExactEvmScheme } from "@okxweb3/x402-evm/exact/client";
 import { UptoEvmScheme } from "@okxweb3/x402-evm/upto/client";
+
+const FETCH_TIMEOUT_MS = 10_000;
+
+function isPrivateAddress(ip: string): boolean {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    if (lower === "::1" || lower === "::") return true;
+    if (lower.startsWith("fe80:") || lower.startsWith("fc") || lower.startsWith("fd")) return true;
+    if (lower.startsWith("::ffff:")) {
+      const v4 = lower.split(":").pop()!;
+      if (net.isIPv4(v4)) return isPrivateAddress(v4);
+    }
+    return false;
+  }
+  return true; // not a recognizable IP literal — treat conservatively as unsafe
+}
+
+/**
+ * Refuse to send a real request (and, for the paid probes, a real payment) to
+ * an internal-only address. `target.url` is buyer-supplied, and the desk this
+ * runs on may have other services reachable only from inside its own network —
+ * an audit target should only ever be a public marketplace endpoint.
+ */
+async function assertPublicHost(rawUrl: string): Promise<void> {
+  const { hostname } = new URL(rawUrl);
+  if (hostname === "localhost") throw new Error('target host "localhost" is not auditable — must be a public address.');
+  if (net.isIP(hostname)) {
+    if (isPrivateAddress(hostname)) throw new Error(`target host ${hostname} is a private/internal address — refusing to audit it.`);
+    return;
+  }
+  let addresses: string[];
+  try {
+    addresses = (await dns.lookup(hostname, { all: true })).map((a) => a.address);
+  } catch (e) {
+    throw new Error(`could not resolve target host "${hostname}": ${(e as Error).message}`);
+  }
+  for (const addr of addresses) {
+    if (isPrivateAddress(addr)) {
+      throw new Error(`target host "${hostname}" resolves to a private/internal address (${addr}) — refusing to audit it.`);
+    }
+  }
+}
 
 export interface Settlement {
   status?: string;
@@ -89,13 +137,24 @@ export class X402Payer {
   }
 
   /**
+   * Every outbound request to a buyer-chosen target.url goes through here:
+   * resolves and rejects private/internal hosts, times out rather than
+   * hanging on a slow-loris target, and refuses to silently follow a redirect
+   * to a different (possibly internal) host after the check above passed.
+   */
+  private async guardedFetch(url: string, init: RequestInit): Promise<Response> {
+    await assertPublicHost(url);
+    return fetch(url, { ...init, redirect: "error", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  }
+
+  /**
    * Read-only: fetch unpaid and parse the 402 challenge, without ever paying.
    * The single source of truth for "what does this endpoint cost right now" —
    * `pay()` spends against the exact `Challenge` this returns, never a fresh
    * one, so a price checked here can't drift from the price actually paid.
    */
   async preflight(url: string, init: RequestInit = {}): Promise<Preflight> {
-    const res = await fetch(url, init);
+    const res = await this.guardedFetch(url, init);
     const hasChallengeHeader = !!res.headers.get("PAYMENT-REQUIRED") || !!res.headers.get("payment-required");
     if (res.status !== 402) return { res, status: res.status, hasChallengeHeader, challenge: null };
     try {
@@ -113,7 +172,7 @@ export class X402Payer {
     const started = Date.now();
     const payload = await this.http.createPaymentPayload(challenge.paymentRequired);
     const paymentHeaders = this.http.encodePaymentSignatureHeader(payload);
-    const paid = await fetch(url, {
+    const paid = await this.guardedFetch(url, {
       ...init,
       headers: { ...(init.headers as Record<string, string>), ...paymentHeaders },
     });
@@ -155,7 +214,7 @@ export class X402Payer {
   /** Single fetch with caller-supplied headers — used to replay a stale signature. */
   async raw(url: string, init: RequestInit, headers: Record<string, string>): Promise<CallOutcome> {
     const started = Date.now();
-    const res = await fetch(url, { ...init, headers: { ...(init.headers as Record<string, string>), ...headers } });
+    const res = await this.guardedFetch(url, { ...init, headers: { ...(init.headers as Record<string, string>), ...headers } });
     const text = await res.text();
     return {
       httpStatus: res.status,
