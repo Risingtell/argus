@@ -19,14 +19,19 @@ const TRANSFER = parseAbiItem("event Transfer(address indexed from, address inde
 // this sees fewer settlements than the site's own evidence links cite.
 const GENESIS_BLOCK = 64_600_000n; // first settlement landed in 64_692_248
 const FROM_BLOCK = process.env.VERIFY_FROM_BLOCK ? BigInt(process.env.VERIFY_FROM_BLOCK) : GENESIS_BLOCK;
-const CHUNK = BigInt(process.env.VERIFY_CHUNK ?? 10_000);
+const CHUNK = BigInt(process.env.VERIFY_CHUNK ?? 100);
 
-// rpc.xlayer.tech caps eth_getLogs at 100 blocks; drpc's free tier allows 10k.
+// drpc.org's free tier now hard-rejects eth_getLogs outright ("upgrade to paid
+// plan"), so rpc.xlayer.tech is the default — but it caps every call at 100
+// blocks, so a genesis-to-now scan is ~17k calls. CONCURRENCY runs many of
+// those 100-block calls in parallel (20 was clean in testing; 100 hit rate
+// limits), which is the only way this finishes in minutes instead of hours.
 // Balances still go through the default client — only log scans use this one.
 const scanClient = createPublicClient({
   chain: xlayer,
-  transport: http(process.env.VERIFY_RPC ?? "https://xlayer.drpc.org"),
+  transport: http(process.env.VERIFY_RPC ?? "https://rpc.xlayer.tech"),
 });
+const CONCURRENCY = Number(process.env.VERIFY_CONCURRENCY ?? 20);
 
 const payTo = process.env.PAY_TO;
 if (!payTo || payTo.length !== 42) {
@@ -75,37 +80,61 @@ interface Row {
   block: bigint;
 }
 const rows: Row[] = [];
+const skippedRanges: Array<[bigint, bigint]> = [];
 
-let start = from;
-let chunk = CHUNK;
-while (start <= latest) {
-  const end = start + chunk - 1n > latest ? latest : start + chunk - 1n;
-  try {
-    const logs = await scanClient.getLogs({
-      address: USDT0,
-      event: TRANSFER,
-      args: { to: treasury },
-      fromBlock: start,
-      toBlock: end,
-    });
-    for (const log of logs) {
-      rows.push({
-        tx: log.transactionHash,
-        from: getAddress(log.args.from!),
-        usd: Number(formatUnits(log.args.value!, 6)),
-        block: log.blockNumber,
-      });
+// Every 100-block window in [from, latest], as an explicit work queue rather
+// than a sequential cursor, so CONCURRENCY workers can pull from it at once.
+const ranges: Array<[bigint, bigint]> = [];
+for (let s = from; s <= latest; s += CHUNK) {
+  const e = s + CHUNK - 1n > latest ? latest : s + CHUNK - 1n;
+  ranges.push([s, e]);
+}
+
+let done = 0;
+let nextIdx = 0;
+const RETRIES = 3;
+
+async function worker(): Promise<void> {
+  while (nextIdx < ranges.length) {
+    const i = nextIdx++;
+    const [start, end] = ranges[i];
+    let ok = false;
+    for (let attempt = 0; attempt < RETRIES && !ok; attempt++) {
+      try {
+        const logs = await scanClient.getLogs({
+          address: USDT0,
+          event: TRANSFER,
+          args: { to: treasury },
+          fromBlock: start,
+          toBlock: end,
+        });
+        for (const log of logs) {
+          rows.push({
+            tx: log.transactionHash,
+            from: getAddress(log.args.from!),
+            usd: Number(formatUnits(log.args.value!, 6)),
+            block: log.blockNumber,
+          });
+        }
+        ok = true;
+      } catch {
+        if (attempt < RETRIES - 1) await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      }
     }
-    start = end + 1n;
-    chunk = CHUNK;
-  } catch (e) {
-    // RPC range limit — halve and retry down to the 100-block floor
-    if (chunk <= 100n) {
-      console.error(`  RPC refused 100-block ranges near block ${start}: ${(e as Error).message.split("\n")[0]}`);
-      break;
+    if (!ok) skippedRanges.push([start, end]);
+    done++;
+    if (done % 500 === 0 || done === ranges.length) {
+      process.stdout.write(`\r  scanned ${done}/${ranges.length} ranges...`);
     }
-    chunk = chunk / 2n < 100n ? 100n : chunk / 2n;
   }
+}
+
+await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ranges.length) }, worker));
+if (ranges.length > 0) process.stdout.write("\n");
+rows.sort((a, b) => (a.block < b.block ? -1 : a.block > b.block ? 1 : 0));
+if (skippedRanges.length > 0) {
+  const skippedBlocks = skippedRanges.reduce((s, [a, b]) => s + Number(b - a + 1n), 0);
+  console.log(`  ⚠ ${skippedRanges.length} range(s), ${skippedBlocks} blocks total, never returned after ${RETRIES} attempts — the totals below are a lower bound, not a full count.`);
 }
 
 if (rows.length === 0) {

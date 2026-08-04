@@ -70,7 +70,20 @@ console.log(`  bureau : ${ARGUS_URL}\n`);
 
 // ── 1. discover ───────────────────────────────────────────────────────────────
 console.log("① discover — reading the service card (free)");
-const card = await fetch(`${ARGUS_URL}/`).then((r) => r.json());
+const card = await fetch(`${ARGUS_URL}/`)
+  .then((r) => r.json())
+  .catch((err) => {
+    if (err.cause?.code === "ECONNREFUSED") {
+      console.error(`\nCan't reach Argus at ${ARGUS_URL}.`);
+      console.error(
+        ARGUS_URL.includes("localhost")
+          ? "Start the bureau first, in another terminal: npm run dev"
+          : "Check the URL is correct and the service is awake (hit /healthz).",
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
 console.log(`  found "${card.name}" — ${card.tagline}`);
 
 // ── 2. screen the counterparty ────────────────────────────────────────────────
