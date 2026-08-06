@@ -10,7 +10,7 @@ import "dotenv/config";
 import { createPublicClient, erc20Abi, formatUnits, getAddress, http, parseAbiItem } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
-import { publicClient, USDT0, xlayer } from "../src/chain/xlayer.js";
+import { USDT0, xlayer } from "../src/chain/xlayer.js";
 
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 
@@ -22,34 +22,84 @@ const FROM_BLOCK = process.env.VERIFY_FROM_BLOCK ? BigInt(process.env.VERIFY_FRO
 const CHUNK = BigInt(process.env.VERIFY_CHUNK ?? 100);
 
 // drpc.org's free tier now hard-rejects eth_getLogs outright ("upgrade to paid
-// plan"), so rpc.xlayer.tech is the default — but it caps every call at 100
-// blocks, so a genesis-to-now scan is ~17k calls. CONCURRENCY runs many of
-// those 100-block calls in parallel (20 was clean in testing; 100 hit rate
-// limits), which is the only way this finishes in minutes instead of hours.
-// Balances still go through the default client — only log scans use this one.
+// plan"). rpc.xlayer.tech works from Render but CloudFront-blocks requests
+// from at least one real cloud/datacenter IP range with a flat 403 — the exact
+// class of environment an automated reviewer runs from — so xlayerrpc.okx.com
+// (OKX's own endpoint, same 100-block cap, different provider/pool) is the
+// default here, matching the fix already proven in the sibling Oddsmith
+// verifier. CONCURRENCY runs many 100-block calls in parallel (20 was clean in
+// testing; 100 hit rate limits), the only way this finishes in minutes not hours.
+// Every chain read in this script — balances, block number, log scans — goes
+// through this one client, so the whole script is portable to whatever
+// environment actually runs it, not just where it was developed.
 const scanClient = createPublicClient({
   chain: xlayer,
-  transport: http(process.env.VERIFY_RPC ?? "https://rpc.xlayer.tech"),
+  transport: http(process.env.VERIFY_RPC ?? "https://xlayerrpc.okx.com"),
 });
 const CONCURRENCY = Number(process.env.VERIFY_CONCURRENCY ?? 20);
 
-const payTo = process.env.PAY_TO;
-if (!payTo || payTo.length !== 42) {
-  console.error("PAY_TO missing from .env — nothing to verify.");
+// A clean clone has no keys and .env.example's fields are placeholders, not
+// real values — parsing them must fail closed to null, never throw, or a
+// judge who copies .env.example verbatim gets a raw stack trace instead of a
+// clear "nothing to verify."
+function safeAddress(v: string | undefined): `0x${string}` | null {
+  if (!v) return null;
+  try {
+    return getAddress(v);
+  } catch {
+    return null;
+  }
+}
+function safeAccountAddress(pk: string | undefined): `0x${string}` | null {
+  if (!pk) return null;
+  try {
+    return privateKeyToAccount(pk as Hex).address;
+  } catch {
+    return null;
+  }
+}
+
+const ARGUS_URL = (process.env.ARGUS_URL ?? "https://argus-qt77.onrender.com").replace(/\/+$/, "");
+
+/**
+ * The treasury, without needing a .env: a clean clone has no keys, so fall
+ * back to the address the live bureau names in its own unpaid 402 challenge —
+ * the same field a buyer's x402 client reads to pay it. That makes
+ * `git clone && npm install && npm run verify` enough to check every number
+ * here, matching the pattern already proven on the sibling Oddsmith verifier.
+ */
+async function resolveTreasury(): Promise<`0x${string}` | null> {
+  const configured = safeAddress(process.env.PAY_TO);
+  if (configured) return configured;
+  try {
+    const res = await fetch(ARGUS_URL + "/api/screen", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const challenge = (await res.json()) as { accepts?: Array<{ payTo?: string }> };
+    return safeAddress(challenge.accepts?.[0]?.payTo);
+  } catch {
+    return null;
+  }
+}
+
+const treasury = await resolveTreasury();
+if (!treasury) {
+  console.error(`Could not determine the treasury: set PAY_TO, or point ARGUS_URL at a running bureau (tried ${ARGUS_URL}).`);
   process.exit(1);
 }
-const treasury = getAddress(payTo);
-const partner = process.env.SPLIT_PARTNER ? getAddress(process.env.SPLIT_PARTNER) : null;
-const buyer = process.env.BUYER_PRIVATE_KEY ? privateKeyToAccount(process.env.BUYER_PRIVATE_KEY as Hex).address : null;
-const patron = process.env.PATRON_PRIVATE_KEY ? privateKeyToAccount(process.env.PATRON_PRIVATE_KEY as Hex).address : null;
+const partner = safeAddress(process.env.SPLIT_PARTNER);
+const buyer = safeAccountAddress(process.env.BUYER_PRIVATE_KEY);
+const patron = safeAccountAddress(process.env.PATRON_PRIVATE_KEY);
 
 async function usdt0Balance(addr: `0x${string}`): Promise<string> {
-  const bal = await publicClient.readContract({ address: USDT0, abi: erc20Abi, functionName: "balanceOf", args: [addr] });
+  const bal = await scanClient.readContract({ address: USDT0, abi: erc20Abi, functionName: "balanceOf", args: [addr] });
   return formatUnits(bal, 6);
 }
 
 async function gasBalance(addr: `0x${string}`): Promise<string> {
-  return formatUnits(await publicClient.getBalance({ address: addr }), 18);
+  return formatUnits(await scanClient.getBalance({ address: addr }), 18);
 }
 
 console.log("ARGUS — on-chain verification (X Layer, eip155:196)");
@@ -69,7 +119,7 @@ for (const [label, addr] of wallets) {
 }
 
 // ── re-derive revenue from Transfer logs ──────────────────────────────────────
-const latest = await publicClient.getBlockNumber();
+const latest = await scanClient.getBlockNumber();
 const from = FROM_BLOCK < latest ? FROM_BLOCK : 0n;
 console.log(`\n  scanning USD₮0 transfers to treasury, blocks ${from}..${latest} (chunks of ${CHUNK})`);
 

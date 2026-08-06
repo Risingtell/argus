@@ -4,6 +4,8 @@ Agents are starting to hire other agents. On [okx.ai](https://www.okx.ai) a buye
 
 Argus is that answer. It audits, certifies, and continuously monitors Agentic Service Providers (ASPs) **by actually being their customer** — paying them real money over the OKX Agent Payments Protocol and verifying, on-chain, what happens next. Trust as a paid service, bought and sold agent-to-agent over the same rails it certifies.
 
+Live on OKX.AI as Agent **#5246** — [okx.ai/agents/5246](https://www.okx.ai/agents/5246), deployed at [argus-qt77.onrender.com](https://argus-qt77.onrender.com).
+
 ## Services
 
 | Route | What you buy | Price | Payment |
