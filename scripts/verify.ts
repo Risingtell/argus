@@ -27,8 +27,10 @@ const CHUNK = BigInt(process.env.VERIFY_CHUNK ?? 100);
 // class of environment an automated reviewer runs from — so xlayerrpc.okx.com
 // (OKX's own endpoint, same 100-block cap, different provider/pool) is the
 // default here, matching the fix already proven in the sibling Oddsmith
-// verifier. CONCURRENCY runs many 100-block calls in parallel (20 was clean in
-// testing; 100 hit rate limits), the only way this finishes in minutes not hours.
+// verifier. CONCURRENCY=20 was tuned for rpc.xlayer.tech and measurably
+// over-rate-limits xlayerrpc.okx.com (60%+ of ranges skipped in testing);
+// Oddsmith's scanner already proved 5 reliable in production against this
+// same host, so this matches it rather than re-discovering the same limit.
 // Every chain read in this script — balances, block number, log scans — goes
 // through this one client, so the whole script is portable to whatever
 // environment actually runs it, not just where it was developed.
@@ -36,7 +38,7 @@ const scanClient = createPublicClient({
   chain: xlayer,
   transport: http(process.env.VERIFY_RPC ?? "https://xlayerrpc.okx.com"),
 });
-const CONCURRENCY = Number(process.env.VERIFY_CONCURRENCY ?? 20);
+const CONCURRENCY = Number(process.env.VERIFY_CONCURRENCY ?? 5);
 
 // A clean clone has no keys and .env.example's fields are placeholders, not
 // real values — parsing them must fail closed to null, never throw, or a
@@ -142,7 +144,10 @@ for (let s = from; s <= latest; s += CHUNK) {
 
 let done = 0;
 let nextIdx = 0;
-const RETRIES = 3;
+// Matches the sibling Oddsmith scanner: sustained concurrent load hits this
+// RPC's rate limit occasionally even at CONCURRENCY=5, so back off longer
+// than a one-off network blip would need before the final attempt gives up.
+const RETRIES = 7;
 
 async function worker(): Promise<void> {
   while (nextIdx < ranges.length) {
@@ -168,7 +173,7 @@ async function worker(): Promise<void> {
         }
         ok = true;
       } catch {
-        if (attempt < RETRIES - 1) await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        if (attempt < RETRIES - 1) await new Promise((r) => setTimeout(r, 500 * (attempt + 1) * (attempt + 1)));
       }
     }
     if (!ok) skippedRanges.push([start, end]);
